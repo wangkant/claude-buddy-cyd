@@ -387,7 +387,7 @@ platformio.ini  build configuration
 ## License & credits
 
 - **Code & tooling** (firmware + `tools/buddy_hook.py`): **MIT** — see
-  [LICENSE](LICENSE). © 2026 Qiankang Wang.
+  [LICENSE](LICENSE). © 2026 Qiankang (Kant) Wang.
 - **Clawd character art** (`data/clawd/` and `assets/`): **not MIT.** "Clawd" is
   the property of **Anthropic, PBC**; all rights reserved. The pixel sprites are
   adapted from [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk)
