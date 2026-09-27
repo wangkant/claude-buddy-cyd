@@ -173,22 +173,27 @@ def arm_table(side):
     return _ARM_TABLE[side]
 
 
-def solve_tip(side, target, length, x=CX, shift=8, prev=None):
-    """Inverse kinematics for a held tool: the arm angle and body x (within
-    +-shift px of x) that put the tip of a `length`-px tool in that hand on
-    world point `target`. `prev` = the last frame's (angle, x), so motion
-    stays smooth instead of jumping between equally good poses."""
-    tx, ty = target
-    best = None
-    for a, (hx0, hy, _) in arm_table(side):
-        for dx in range(-shift, shift + 1):
-            hx = hx0 + x + dx
-            err = (math.hypot(tx - hx, ty - hy) - length) ** 2 + 0.25 * dx * dx
-            if prev is not None:
-                err += 0.015 * (a - prev[0]) ** 2 + 0.2 * (x + dx - prev[1]) ** 2
-            if best is None or err < best[0]:
-                best = (err, a, x + dx)
-    return best[1], best[2]
+def fit(pts, x, length, lo, hi, side="r"):
+    """Where a prop has to stand so that Clawd, standing still at x, reaches
+    every one of its `pts` (prop coordinates) with the tip of a `length`-px
+    tool held at lo..hi degrees -- the arm and the wrist do all the work and
+    the body never shuffles. Returns the middle of the offsets that work."""
+    reach = set()
+    for _, (hx0, hy, _) in arm_table(side):
+        for k in range(2 * (hi - lo) + 1):
+            r = math.radians(lo + k / 2)
+            reach.add((round(hx0 + x + length * math.cos(r)),
+                       round(hy + length * math.sin(r))))
+    xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+    ok = [(ox, oy)
+          for ox in range(-math.floor(min(xs)), W - math.ceil(max(xs)))
+          for oy in range(-math.floor(min(ys)), H - math.ceil(max(ys)))
+          if all((round(px + ox), round(py + oy)) in reach for px, py in pts)]
+    if not ok:
+        raise ValueError("prop out of reach")
+    mx = sum(o[0] for o in ok) / len(ok)
+    my = sum(o[1] for o in ok) / len(ok)
+    return min(ok, key=lambda o: (o[0] - mx) ** 2 + (o[1] - my) ** 2)
 
 
 # ---- Clawd --------------------------------------------------------------------
@@ -294,16 +299,18 @@ def hard_hat(f, A):
     f.rect(-1.1, -11.5, 2.2, 0.7, "YD", A)
 
 
-def glasses(f, A, look=(0, 0)):
+def glasses(f, A):
+    """Black-rimmed reading glasses: a thin frame around each eye (roomy
+    enough for the eyes to move inside; the corners are left open so the
+    rims read as softly rounded) and a bridge between them."""
+    t = 0.3
     for ex in (-3.5, 3.5):
-        cx, cy = ex + look[0], -6
-        for k in range(12):
-            a0 = 2 * math.pi * k / 12
-            a1 = 2 * math.pi * (k + 1) / 12
-            f.bar(cx + 1.25 * math.cos(a0), cy + 1.25 * math.sin(a0),
-                  cx + 1.25 * math.cos(a1), cy + 1.25 * math.sin(a1),
-                  0.35, "BRD", A)
-    f.bar(-2.25, -6.2, 2.25, -6.2, 0.35, "BRD", A)
+        x0, y0, w, h = ex - 1.4, -7.4, 2.8, 3.0
+        f.rect(x0 + t, y0, w - 2 * t, t, "G4", A)
+        f.rect(x0 + t, y0 + h - t, w - 2 * t, t, "G4", A)
+        f.rect(x0, y0 + t, t, h - 2 * t, "G4", A)
+        f.rect(x0 + w - t, y0 + t, t, h - 2 * t, "G4", A)
+    f.rect(-2.1, -6.6, 4.2, t, "G4", A)                     # bridge
 
 
 def headphones(f, A):
@@ -407,7 +414,7 @@ def clip_idle_blink():
 def clip_idle_look():
     out = []
     for t in range(48):
-        # look left, back, right, back, up; the body leans into the look
+        # look left, back, right, back, up
         if t < 8:
             lk = (0, 0)
         elif t < 18:
@@ -423,7 +430,7 @@ def clip_idle_look():
         else:
             lk = (0, 0)
         f = Frame()
-        clawd(f, x=CX + 3 * lk[0], look=lk,
+        clawd(f, look=lk,
               eyes="blink" if t in (21, 35) else "open")
         out.append((f, FPS_MS))
     return out
@@ -582,18 +589,55 @@ def clip_typing():
     return out
 
 
+def solve_tool(side, tip, length, phi0, phi_span, x, prev=None, strict=True):
+    """Hold a pen/brush/spoon like a hand would, Clawd standing still at x:
+    the arm angle and the tool's angle (phi0 +- phi_span degrees, screen
+    coords: 0 = pointing right, +90 = straight down) are chosen together so
+    its tip lands on `tip`, the angle staying near phi0 and both staying
+    close to the last frame's `prev` = (arm, phi). Returns (arm, phi)."""
+    tx, ty = tip
+    best = None
+    for a, (hx0, hy, _) in arm_table(side):
+        for dphi in range(-phi_span, phi_span + 1):
+            phi = phi0 + dphi
+            r = math.radians(phi)
+            ex = hx0 + x + length * math.cos(r) - tx
+            ey = hy + length * math.sin(r) - ty
+            cost = 30 * (ex * ex + ey * ey) + 0.03 * dphi * dphi
+            if prev is not None:
+                cost += 0.02 * (a - prev[0]) ** 2 + 0.03 * (phi - prev[1]) ** 2
+            if best is None or cost < best[0]:
+                best = (cost, a, phi, math.hypot(ex, ey))
+    if strict and best[3] > 1.5:
+        raise ValueError("tip %r out of reach" % (tip,))
+    return best[1], best[2]
+
+
+def tool_line(hand, phi, length):
+    """(grip, tip) of a tool held in `hand` at angle phi."""
+    hx, hy, _ = hand
+    r = math.radians(phi)
+    return (hx, hy), (hx + length * math.cos(r), hy + length * math.sin(r))
+
+
 def pencil_tip(hand, deg, length=20):
     hx, hy, _ = hand
     t = math.radians(deg)
     return hx + length * math.cos(t), hy + length * math.sin(t)
 
 
-def draw_pencil(f, hand, tip, body="Y"):
-    """A pencil held in the hand block, point at `tip`."""
+def draw_pencil(f, hand, tip, body="Y", phi=None):
+    """A pencil held in the hand block, point at `tip`: eraser behind the
+    fist, yellow body, sharpened wood, graphite point."""
     hx, hy, _ = hand
-    f.bar(hx - 3, hy - 3, tip[0], tip[1], 3, body)
-    f.bar(hx - 3, hy - 3, hx - 6, hy - 6, 3, "PK")
-    f.rect(tip[0] - 1, tip[1] - 1, 2.5, 2.5, "G3")
+    dx, dy = tip[0] - hx, tip[1] - hy
+    d = math.hypot(dx, dy) or 1.0
+    ux, uy = dx / d, dy / d
+    f.bar(hx - 5 * ux, hy - 5 * uy, hx - 1 * ux, hy - 1 * uy, 3, "PK")
+    f.bar(hx - 1 * ux, hy - 1 * uy, tip[0] - 4 * ux, tip[1] - 4 * uy, 3, body)
+    f.bar(tip[0] - 4 * ux, tip[1] - 4 * uy, tip[0] - 1 * ux, tip[1] - 1 * uy,
+          2.2, "BR")
+    f.rect(tip[0] - 1, tip[1] - 1, 2, 2, "G4")
 
 
 def handwriting(x0, y, width, seed):
@@ -604,35 +648,46 @@ def handwriting(x0, y, width, seed):
 
 
 def clip_writing():
-    """Writing in a notepad on the desk: the pencil stays in the right hand
-    and the handwriting appears exactly under its point, line after line
-    (the arm and a small step of the body reach along each line)."""
-    pad = (CX + 16, GROUND - 60, 50, 44)
-    pencil = 18
-    lines = [handwriting(pad[0] + 6, pad[1] + 13 + i * 9,
-                         22 if i == 3 else 36, i) for i in range(4)]
+    """Writing in a notepad on the desk, Clawd standing still: the pencil is
+    held point-down the way a hand holds one, and the arm and the wrist
+    carry the point along each line -- the handwriting appears exactly
+    under it. The notepad sits where that reach covers every line."""
+    pencil, x = 20, CX - 29
+    rel = [handwriting(6, 12 + i * 7, 14 if i == 3 else 18, i) for i in range(4)]
+    ox, oy = fit([q for ln in rel for q in ln], x, pencil, 15, 95)
+    pad = (ox, oy, 30, 40)
+    lines = [[(px + ox, py + oy) for px, py in ln] for ln in rel]
     plan = []
-    for li, pts in enumerate(lines):
-        plan += [(li, -1)] * 2 + [(li, j) for j in range(len(pts))]
+    for li in range(4):
+        plan += [(li, -2), (li, -1)] + [(li, j) for j in range(len(lines[li]))]
+    plan += [(4, 0)] * 6                        # a look at the page
+    desk = pad[1] + pad[3]
     out = []
     prev = None
     for t, (li, j) in enumerate(plan):
         f = Frame()
-        f.rect(pad[0] - 8, GROUND - 16, pad[2] + 22, 16, "BR")      # desk
-        f.rect(pad[0] - 8, GROUND - 16, pad[2] + 22, 3, "BRD")
+        f.rect(pad[0] - 8, desk, pad[2] + 16, GROUND - desk, "BR")    # desk
+        f.rect(pad[0] - 8, desk, pad[2] + 16, 3, "BRD")
         f.rect(*pad, "W")                                           # notepad
         f.rect(pad[0], pad[1], pad[2], 4, "R")
-        for k in range(li + 1):
+        for k in range(min(li + 1, 4)):
             pts = lines[k] if k < li else lines[k][:max(0, j + 1)]
             for a, b in pairwise(pts):
                 f.bar(*a, *b, 1.6, "BD")
-        pts = lines[li]
-        tip = pts[j] if j >= 0 else (pts[0][0] - 2, pts[0][1] - 5)
-        arm, x = solve_tip("r", tip, pencil, x=CX - 30, prev=prev)
-        prev = (arm, x)
-        clawd(f, x=x, arm_r=arm, look=(0.5, 0.35),
-              eyes="blink" if t == 30 else "open")
-        draw_pencil(f, f.hands["r"], tip)
+        if li < 4:
+            pts = lines[li]
+            if j >= 0:
+                tip = pts[j]
+            else:                               # lifted, back to the line start
+                tip = (pts[0][0] - 2, pts[0][1] - (5 if j == -2 else 2))
+            prev = solve_tool("r", tip, pencil, 55, 40, x, prev, strict=j >= 0)
+            clawd(f, x=x, arm_r=prev[0], look=(0.5, 0.4),
+                  eyes="blink" if t == 40 else "open")
+            draw_pencil(f, f.hands["r"], tip)
+        else:                                   # pencil lifted off the page
+            clawd(f, x=x, arm_r=prev[0] + 8, look=(0.5, 0.3), eyes="happy")
+            _, tip = tool_line(f.hands["r"], prev[1], pencil)
+            draw_pencil(f, f.hands["r"], tip)
         out.append((f, FPS_MS))
     return out
 
@@ -737,22 +792,23 @@ def clip_hammering():
 
 def clip_reading():
     """Reading glasses on, an open book held by its two outer edges in both
-    hands, just below the eyes; the eyes run along a line and drop to the
-    next, and every so often a page turns."""
+    hands, just below the glasses; the eyes run along a line and drop to
+    the next, and every so often a page turns."""
     out = []
     n = 60
-    lh = hands_at(arm_l=-20)["l"]
-    rh = hands_at(arm_r=-20)["r"]
+    arm = -24
+    lh = hands_at(arm_l=arm)["l"]
+    rh = hands_at(arm_r=arm)["r"]
     x0, x1 = lh[0] - 2, rh[0] + 2
-    top = GROUND - 5 * U + 1                     # just under the eyes
+    top = GROUND - 4.4 * U + 2                   # just under the glasses
     h = 22
     mid = (x0 + x1) / 2
     for t in range(n):
         f = Frame()
         line = (t // 10) % 3
         along = (t % 10) / 9
-        A = clawd(f, arm_l=-20, arm_r=-20,
-                  look=(-0.45 + 0.9 * along, 0.2 + 0.15 * line),
+        A = clawd(f, arm_l=arm, arm_r=arm,
+                  look=(-0.45 + 0.9 * along, -0.05 + 0.1 * line),
                   eyes="blink" if t == 47 else "open")
         glasses(f, A)
         f.rect(x0, top, x1 - x0, h, "BD")                   # cover
@@ -770,46 +826,44 @@ def clip_reading():
             f.poly([(mid, top + 2), (px, top + 2 - lift),
                     (px, top + h - 3 - lift), (mid, top + h - 3)],
                    "G1" if k > 0.5 else "W")
-        clawd(f, arm_l=-20, arm_r=-20, arms_only=True)      # hands grip the edges
+        clawd(f, arm_l=arm, arm_r=arm, arms_only=True)      # hands grip the edges
         out.append((f, FPS_MS))
     return out
 
 
 def clip_scanning():
-    """Grep: sweeping a magnifier along a printed page line by line; the
-    matching line lights up once the glass has passed over it."""
+    """Grep: standing at a printed page, sweeping a magnifier along it line
+    by line -- the arm and the wrist carry the glass, the body stays put --
+    and the matching line lights up once the glass has passed over it."""
     n, per, rows, match = 48, 12, 4, 2
-
-    def pose(i, k):
-        prev = (i - 1) % rows
-        row = i if k >= 0.25 else prev + (i - prev) * ease(k / 0.25)
-        sweep = 0 if k < 0.25 else (k - 0.25) / 0.75
-        return dict(x=CX - 39 + 6 * sweep, arm_r=46 - 17 * row,
-                    arm_l=0, look=(0.5, -0.3 + 0.18 * row))
-
-    def lens(i, k):
-        return pencil_tip(hands_at(**pose(i, k))["r"], -25, 24)
-    paths = [[lens(i, 0.25 + 0.75 * s / 8) for s in range(9)] for i in range(rows)]
-    xs = [p[0] for pa in paths for p in pa]
-    ys = [p[1] for pa in paths for p in pa]
-    page = (min(xs) - 16, min(ys) - 16, max(xs) - min(xs) + 32,
-            max(ys) - min(ys) + 30)
+    x, handle = CX - 33, 28
+    rel = [[(2 * s, 10 * r) for s in range(9)] for r in range(rows)]
+    ox, oy = fit([q for row in rel for q in row], x, handle, -90, 30)
+    paths = [[(px + ox, py + oy) for px, py in row] for row in rel]
+    page = (ox - 16, oy - 14, 48, 10 * rows + 18)
+    plan = []
+    for i in range(rows):
+        a, b = paths[(i - 1) % rows][-1], paths[i][0]
+        for q in (1 / 3, 2 / 3, 1.0):           # the glass back to the line start
+            plan.append((i, 0.0, (a[0] + (b[0] - a[0]) * q, a[1] + (b[1] - a[1]) * q)))
+        for k in range(per - 3):
+            u = k / (per - 4)
+            plan.append((i, u, (paths[i][0][0] + 16 * u, paths[i][0][1])))
     out = []
-    for t in range(n):
+    prev = None
+    for t, (i, u, lens) in enumerate(plan[:n]):
         f = Frame()
         f.rect(*page, "W")
-        i, s = t // per, t % per
-        k = s / per
         for j, pa in enumerate(paths):
-            y = sum(p[1] for p in pa) / len(pa)
-            lit = j == match and (i > match or (i == match and k > 0.9))
-            f.rect(pa[0][0] - 6, y - 1, pa[-1][0] - pa[0][0] + 12, 3,
-                   "Y" if lit else "G1")
-            f.rect(pa[0][0] - 6, y + 5, (pa[-1][0] - pa[0][0]) * 0.6, 2, "G1")
-        clawd(f, **pose(i, k))
-        lx, ly = lens(i, k)
+            y = pa[0][1]
+            lit = j == match and (i > match or (i == match and u > 0.9))
+            f.rect(pa[0][0] - 6, y - 1, 28, 3, "Y" if lit else "G1")
+            f.rect(pa[0][0] - 6, y + 4, 17, 2, "G1")
+        prev = solve_tool("r", lens, handle, -30, 60, x, prev)
+        clawd(f, x=x, arm_r=prev[0], look=(0.5, -0.3 + 0.18 * i),
+              eyes="blink" if t == 30 else "open")
         hx, hy, _ = f.hands["r"]
-        magnifier(f, lx, ly, 1.5, rim="G3", to=(hx, hy))
+        magnifier(f, lens[0], lens[1], 1.5, rim="G3", to=(hx, hy))
         out.append((f, FPS_MS))
     return out
 
@@ -847,14 +901,12 @@ def clip_searching():
 
 
 def clip_planning():
-    """Planning a to-do list: a clipboard stands on the floor beside Clawd;
-    the pencil in the right hand travels to each box in turn and ticks it --
-    the green check is exactly the path its point drew -- then a happy look
-    at the finished list."""
-    board = (CX + 20, GROUND - 76, 58, 76)       # stands on the floor
+    """Planning a to-do list: a clipboard stands on the floor beside Clawd,
+    who stays put while the pencil in the right hand travels to each box
+    in turn and ticks it -- the green check is exactly the path its point
+    drew -- then a happy look at the finished list."""
     rows = 4
-    pencil = 20
-    boxes = [(board[0] + 13, board[1] + 18 + i * 15) for i in range(rows)]
+    pencil, x = 20, CX - 33
 
     def tick_path(bx, by):
         """Down into the box, then a longer stroke up and to the right."""
@@ -863,14 +915,18 @@ def clip_planning():
                 ((b[0] * 2 + c[0]) / 3, (b[1] * 2 + c[1]) / 3),
                 ((b[0] + c[0] * 2) / 3, (b[1] + c[1] * 2) / 3), c]
 
-    ticks = [tick_path(*b) for b in boxes]
+    rel = [tick_path(13, 18 + i * 15) for i in range(rows)]
+    ox, oy = fit([q for tk in rel for q in tk], x, pencil, -20, 80)
+    board = (ox, oy, 58, GROUND - oy)            # stands on the floor
+    boxes = [(ox + 13, oy + 18 + i * 15) for i in range(rows)]
+    ticks = [[(px + ox, py + oy) for px, py in tk] for tk in rel]
     # the plan: per row, travel (pencil lifted) then the tick, then a pause
     plan = []
     for i in range(rows):
         start = ticks[i][0]
-        came = ticks[i - 1][-1] if i else (start[0] - 8, start[1] - 14)
+        came = ticks[i - 1][-1] if i else (start[0] - 4, start[1] - 10)
         for q in (0.25, 0.5, 0.75, 1.0):
-            lift = 5 * math.sin(math.pi * q)
+            lift = 4 * math.sin(math.pi * q)
             plan.append((i, -1, (came[0] + (start[0] - came[0]) * q,
                                  came[1] + (start[1] - came[1]) * q - lift)))
         for j, pt in enumerate(ticks[i]):
@@ -892,53 +948,82 @@ def clip_planning():
             path = ticks[r] if r < i else (ticks[r][:j + 1] if r == i and j >= 0 else [])
             for a, b in pairwise(path):
                 f.bar(*a, *b, 2.4, "GR")
-        if tip is None:                          # all done
-            clawd(f, x=prev[1], arm_r=40, eyes="happy")
+        if tip is None:                          # all done, pencil up
+            clawd(f, x=x, arm_r=40, eyes="happy")
+            _, up = tool_line(f.hands["r"], -60, pencil)
+            draw_pencil(f, f.hands["r"], up)
         else:
-            arm, x = solve_tip("r", tip, pencil, x=CX - 28, shift=10, prev=prev)
-            prev = (arm, x)
-            clawd(f, x=x, arm_r=arm, look=(0.5, (tip[1] - GROUND + 40) / 60))
+            prev = solve_tool("r", tip, pencil, 30, 50, x, prev, strict=j >= 0)
+            clawd(f, x=x, arm_r=prev[0], look=(0.5, (tip[1] - GROUND + 40) / 60))
             draw_pencil(f, f.hands["r"], tip)
         out.append((f, FPS_MS))
     return out
 
 
 def clip_tooling():
-    """An MCP tool call: carrying a plug on its cable to the wall socket,
-    plugging in (spark, the LED goes green), a moment, then unplugging."""
-    out = []
+    """An MCP tool call, seen from the side: Clawd steps up to the outlet on
+    the wall with a plug in hand, pushes it in -- the prongs slide into the slots and
+    out of sight until the plug sits flush -- the light goes green with a
+    spark, a happy moment, then it pulls the plug and steps back."""
+    face = 170                                   # the outlet's front face
+    hy0 = hands_at(arm_r=0)["r"][1]              # hand height (arm level)
+    prong_y = (hy0 - 5, hy0 + 3)                 # prongs 3 px thick
+    body_w, prong_l = 12, 8
+    # body x where the plug sits flush (fully in) / where the prongs touch
+    grip = hands_at(x=0, arm_r=0)["r"][0]
+    x_in = face - body_w - 1 - grip
+    x_touch = x_in - prong_l
+    x_far = x_touch - 10
     n = 48
-    start, end = CX - 24, CX + 2
-    # the plug is gripped in the right hand; the socket sits where the
-    # prongs end up once Clawd has walked over
-    hx_end, hy_end, _ = hands_at(x=end, arm_r=5)["r"]
-    sock_x, sock_y = hx_end + 14, hy_end - 9
+    out = []
     for t in range(n):
         f = Frame()
-        f.rect(sock_x - 1, sock_y - 8, 24, 34, "G2")          # socket plate
-        f.rect(sock_x + 4, sock_y + 1, 3, 6, "G4")
-        f.rect(sock_x + 4, sock_y + 11, 3, 6, "G4")
         p = t / n
-        reach = (ease(p / 0.35) if p < 0.35 else
-                 (1 if p < 0.75 else 1 - ease((p - 0.75) / 0.25)))
-        connected = 0.35 <= p < 0.75
-        f.circle(sock_x + 14, sock_y + 20, 3, "GR" if connected else "R")
-        bx = start + (end - start) * reach
-        walking = 0 < reach < 1
-        pose = dict(x=bx, arm_r=5, arm_l=0, look=(0.5, -0.1),
-                    eyes="happy" if connected and p > 0.45 else "open",
+        if p < 0.12:                             # plug in hand, eyeing the outlet
+            x = x_far
+            walking = False
+        elif p < 0.30:                           # a step up to the wall
+            x = x_far + (x_touch - x_far) * ease((p - 0.12) / 0.18)
+            walking = True
+        elif p < 0.40:                           # push it in
+            x = x_touch + (x_in - x_touch) * ease((p - 0.30) / 0.10)
+            walking = False
+        elif p < 0.70:                           # plugged in
+            x = x_in
+            walking = False
+        elif p < 0.78:                           # pull it out
+            x = x_in - (x_in - x_touch) * ease((p - 0.70) / 0.08)
+            walking = False
+        elif p < 0.94:                           # a step back
+            x = x_touch - (x_touch - x_far) * ease((p - 0.78) / 0.16)
+            walking = True
+        else:
+            x = x_far
+            walking = False
+        plugged = 0.40 <= p < 0.70
+        pose = dict(x=x, arm_r=0, look=(0.5, 0.0),
+                    eyes="happy" if plugged and p > 0.45 else "open",
                     legs=("walkA" if t % 4 < 2 else "walkB") if walking else "stand")
         hx, hy, _ = hands_at(**pose)["r"]
-        # the cable runs from the plug behind Clawd and off to the left
-        f.bar(hx, hy + 2, bx - 20, hy + 6, 2.5, "G3")
-        f.bar(bx - 20, hy + 6, bx - 60, GROUND - 1, 2.5, "G3")
+        # cable: from the back of the plug, behind Clawd, off to the left
+        f.bar(hx, hy, x - 20, hy + 4, 2.5, "G3")
+        f.bar(x - 20, hy + 4, x - 62, GROUND - 1, 2.5, "G3")
         clawd(f, **pose)
-        f.rect(hx - 2, hy - 7, 14, 16, "G1")                       # plug body
-        f.rect(hx + 12, hy - 4, 7, 3, "Y")                         # prongs
-        f.rect(hx + 12, hy + 4, 7, 3, "Y")
-        if connected and p < 0.43:
-            for sx, sy in ((sock_x - 6, sock_y - 12), (sock_x - 8, sock_y + 20),
-                           (sock_x - 12, sock_y + 4)):
+        # the plug, gripped in the right hand, prongs pointing at the outlet
+        bx = hx + 1
+        f.rect(bx, hy - 8, body_w, 16, "G1")
+        f.rect(bx, hy - 8, 3, 16, "G2")
+        for py in prong_y:
+            f.rect(bx + body_w, py, prong_l, 3, "Y")
+        # wall + outlet, drawn last so the inserted part of the prongs hides
+        f.rect(face + 7, 40, W - face - 7, GROUND - 40, "G3")
+        f.rect(face, hy0 - 14, 7, 28, "G2")
+        for py in prong_y:
+            f.rect(face, py - 1, 2, 5, "G4")     # the slots
+        f.circle(face + 3.5, hy0 - 19, 3, "GR" if plugged else "R")
+        if 0.40 <= p < 0.47:                     # spark as it seats
+            for sx, sy in ((face - 8, hy0 - 16), (face - 10, hy0 + 14),
+                           (face - 14, hy0 - 2)):
                 glyph(f, sx, sy, SPARK, "Y", 1.5)
         out.append((f, FPS_MS))
     return out
@@ -1016,18 +1101,23 @@ def clip_delegating():
 
 
 def clip_sweeping():
-    """Compacting: sweeping with a broom held in both hands; the bristles
-    brush along the floor and push the dust into a neat pile."""
+    """Compacting: sweeping with a push broom, feet planted -- the arm
+    pumps, the handle slides through the hand, and the bristles brush along
+    the floor, pushing the dust into a neat pile."""
     out = []
     n = 40
+    x, broom = CX - 22, 46
     for t in range(n):
         f = Frame()
         s = math.sin(t * 2 * math.pi / 10)
-        clawd(f, x=CX - 22 + 2 * s, arm_l=-30, arm_r=-30,
-              look=(0.5, 0.45), legs="walkA" if s > 0 else "walkB")
-        hx, hy, _ = f.hands["r"]
+        arm = -30 + 14 * s
+        hx, hy, _ = hands_at(x=x, arm_r=arm)["r"]
         bx = 150 + 10 * s
-        f.bar(hx - 4, hy - 8, bx, GROUND - 6, 3, "BR")
+        # the handle: from the head, through the hand, on past it
+        d = math.hypot(hx - bx, hy - (GROUND - 6))
+        ux, uy = (hx - bx) / d, (hy - (GROUND - 6)) / d
+        f.bar(bx, GROUND - 6, bx + broom * ux, GROUND - 6 + broom * uy, 3, "BR")
+        clawd(f, x=x, arm_l=-30, arm_r=arm, look=(0.5, 0.45))
         f.poly([(bx - 8, GROUND - 7), (bx + 8, GROUND - 7), (bx + 12, GROUND),
                 (bx - 12, GROUND)], "Y")
         f.rect(bx - 9, GROUND - 8, 18, 2, "YD")
@@ -1138,38 +1228,41 @@ def clip_error():
 
 
 def clip_brewing():
-    """Brewing: stirring a bubbling cauldron; the spoon goes round in the
-    pot with the hand."""
+    """Brewing: stirring a bubbling cauldron, standing still -- the arm and
+    the wrist take the spoon round in the pot, its bowl circling out of
+    sight under the brew."""
     out = []
     n = 32
-
-    def pose(a):
-        return dict(x=CX - 30 + 3 * math.cos(a), arm_r=8 + 10 * math.sin(a),
-                    arm_l=0, look=(0.5, 0.4))
-    # where the spoon's bowl goes: a fixed spoon in the hand, so it circles
-    # with the hand -- the pot sits around that circle
-    bowls = [pencil_tip(hands_at(**pose(t * 2 * math.pi / 16))["r"], 62, 30)
-             for t in range(16)]
-    pcx = sum(b[0] for b in bowls) / 16
-    rim = min(b[1] for b in bowls) - 3
+    x, spoon = CX - 30, 30
+    pcx, depth = 131, 110
+    rim = depth - 9
+    bowls = [(pcx + 12 * math.cos(2 * math.pi * k / 16),
+              depth + 3 * math.sin(2 * math.pi * k / 16)) for k in range(16)]
+    poses, prev = [], None
+    for _ in range(2):                     # twice round: the 2nd lap loops
+        for b in bowls:
+            prev = solve_tool("r", b, spoon, 75, 35, x, prev)
+            poses.append(prev)
+    poses = poses[16:]
     for t in range(n):
         f = Frame()
-        a = t * 2 * math.pi / 16
+        arm, phi = poses[t % 16]
         # cauldron: back rim, brew, (spoon), then the front covers the spoon
-        f.rect(pcx - 36, rim - 3, 72, 7, "G3")
-        f.rect(pcx - 31, rim - 1, 62, 3, "GR")
-        clawd(f, **pose(a), eyes="blink" if t == 20 else "open")
-        hx, hy, _ = f.hands["r"]
-        bx, by = pencil_tip(f.hands["r"], 62, 30)
-        f.bar(hx, hy - 2, bx, by, 3, "BR")
-        f.poly([(pcx - 33, rim + 2), (pcx + 33, rim + 2), (pcx + 27, rim + 34),
-                (pcx - 27, rim + 34)], "G4")
-        f.rect(pcx - 36, rim, 72, 5, "G3")
-        f.rect(pcx - 24, rim + 34, 7, GROUND - rim - 34, "G3")
-        f.rect(pcx + 17, rim + 34, 7, GROUND - rim - 34, "G3")
+        f.rect(pcx - 30, rim - 3, 60, 7, "G3")
+        f.rect(pcx - 26, rim - 1, 52, 3, "GR")
+        clawd(f, x=x, arm_r=arm, look=(0.5, 0.4),
+              eyes="blink" if t == 20 else "open")
+        grip, bowl = tool_line(f.hands["r"], phi, spoon)
+        f.bar(*grip, *bowl, 3, "BR")
+        f.poly([(pcx - 28, rim + 2), (pcx + 28, rim + 2), (pcx + 27, rim + 13),
+                (pcx + 19, rim + 24), (pcx - 19, rim + 24), (pcx - 27, rim + 13)],
+               "G4")
+        f.rect(pcx - 30, rim, 60, 5, "G3")
+        f.rect(pcx - 20, rim + 24, 6, GROUND - rim - 24, "G3")
+        f.rect(pcx + 14, rim + 24, 6, GROUND - rim - 24, "G3")
         for i in range(4):                    # bubbles rising off the brew
             k = ((t + i * 8) % 32) / 32
-            bx = pcx - 24 + (i * 15) % 48
+            bx = pcx - 6 + (i * 9) % 28
             by = rim - 2 - 40 * k
             if k < 0.85:
                 f.circle(bx + 3 * math.sin(k * 9), by, 3 if k < 0.3 else 2,
@@ -1243,28 +1336,29 @@ def clip_conjuring():
 
 
 def stroke_paths():
-    """The picture, stroke by stroke, in canvas coordinates (50 x 56):
-    a sun, a hill, a tree trunk and its crown, a red flower."""
-    sun = [(35 + 6 * math.cos(a / 10 * 2 * math.pi),
-            13 + 6 * math.sin(a / 10 * 2 * math.pi)) for a in range(11)]
-    hill = [(4 + 42 * i / 10, 47 - 11 * math.sin(math.pi * i / 10))
+    """The picture, stroke by stroke, in canvas coordinates (25 x 36, a
+    portrait): a sun, a hill, a tree trunk and its crown, a red flower."""
+    def ring(cx, cy, r, a0=0.0):
+        return [(cx + r * math.cos(a0 + k * math.pi / 5),
+                 cy + r * math.sin(a0 + k * math.pi / 5)) for k in range(11)]
+    hill = [(4 + 17 * i / 10, 32 - 7 * math.sin(math.pi * i / 10))
             for i in range(11)]
-    trunk = [(14, 44 - 14 * i / 6) for i in range(7)]
-    crown = [(14 + 6 * math.cos(a / 10 * 2 * math.pi + 1.5),
-              25 + 5 * math.sin(a / 10 * 2 * math.pi + 1.5)) for a in range(11)]
-    flower = [(31, 45), (31, 40), (29, 38), (31, 36), (33, 38), (31, 40)]
-    return [("Y", sun), ("GR", hill), ("BR", trunk), ("GD", crown),
-            ("R", flower)]
+    trunk = [(8, 31 - 10 * i / 5) for i in range(6)]
+    flower = [(16, 31), (16, 28), (14.5, 26.5), (16, 25), (17.5, 26.5), (16, 28)]
+    return [("Y", ring(17, 7, 3.5)), ("GR", hill), ("BR", trunk),
+            ("GD", ring(8, 17, 3.5, 1.5)), ("R", flower)]
 
 
 def clip_painting():
-    """Painting a little landscape: beret on, the brush in the right hand;
-    every stroke is laid down exactly where the brush tip travels (the arm
-    and a small step of the body reach each point), the brush lifted in
-    between strokes, then a happy look at the result."""
-    cv = (CX + 12, 46, 50, 56)
-    brush = 28
+    """Painting a little landscape at the easel, Clawd standing still: the
+    brush is held pointing at the canvas, and the arm and the wrist carry
+    the bristles along each stroke; paint goes on exactly where they pass,
+    the brush is lifted between strokes, and at the end a happy look at the
+    picture. The easel stands where that reach covers the whole picture."""
+    brush, x = 30, CX - 25
     strokes = stroke_paths()
+    ox, oy = fit([q for _, path in strokes for q in path], x, brush, -65, 45)
+    cv = (ox, oy, 25, 36)
     plan = []
     for si, (_, path) in enumerate(strokes):
         plan += [(si, -2), (si, -1)] + [(si, j) for j in range(len(path))]
@@ -1273,44 +1367,44 @@ def clip_painting():
     prev = None
     for si, j in plan:
         f = Frame()
-        f.bar(cv[0] + 10, cv[1] + cv[3], cv[0] + 2, GROUND, 3, "BR")
-        f.bar(cv[0] + cv[2] - 10, cv[1] + cv[3], cv[0] + cv[2] - 2, GROUND, 3, "BR")
+        f.bar(cv[0] + 6, cv[1] + cv[3], cv[0], GROUND, 3, "BR")        # easel
+        f.bar(cv[0] + cv[2] - 6, cv[1] + cv[3], cv[0] + cv[2], GROUND, 3, "BR")
         f.rect(cv[0] + cv[2] / 2 - 2, cv[1] - 8, 4, 10, "BR")
-        f.rect(*cv, "W")
-        f.rect(cv[0] - 3, cv[1] + cv[3], cv[2] + 6, 4, "BRD")
+        f.rect(cv[0] - 2, cv[1] - 2, cv[2] + 4, cv[3] + 4, "W")
+        f.rect(cv[0] - 4, cv[1] + cv[3] + 2, cv[2] + 8, 4, "BRD")
         for k in range(min(si + 1, len(strokes))):
             c, path = strokes[k]
             upto = len(path) if k < si else j + 1
-            pts = [(cv[0] + px, cv[1] + py) for px, py in path[:max(0, upto)]]
+            pts = [(ox + px, oy + py) for px, py in path[:max(0, upto)]]
             for a, b in pairwise(pts):
-                f.bar(*a, *b, 4, c)
+                f.bar(*a, *b, 3, c)
             if len(pts) == 1:
-                f.rect(pts[0][0] - 2, pts[0][1] - 2, 4, 4, c)
-        tip = None
+                f.rect(pts[0][0] - 1.5, pts[0][1] - 1.5, 3, 3, c)
         if si < len(strokes):
             c, path = strokes[si]
-            sx, sy = cv[0] + path[0][0], cv[1] + path[0][1]
+            sx, sy = ox + path[0][0], oy + path[0][1]
             if j >= 0:
-                tip = (cv[0] + path[j][0], cv[1] + path[j][1])
-            else:                                  # lifted, moving to the start
-                tip = (sx - 10, sy - 8) if j == -2 else (sx - 4, sy - 4)
-            arm, x = solve_tip("r", tip, brush, x=CX - 40, shift=12, prev=prev)
-            prev = (arm, x)
-            hx, hy, _ = hands_at(x=x, arm_r=arm)["r"]
-            reach_err = abs(math.hypot(tip[0] - hx, tip[1] - hy) - brush)
-            assert reach_err < 6, "brush can't reach %s (off by %.1f px)" % (tip, reach_err)
-            A = clawd(f, x=x, arm_r=arm,
-                      look=(0.5, max(-0.45, min(0.45, (tip[1] - 60) / 60))))
+                tip = (ox + path[j][0], oy + path[j][1])
+            else:                                # lifted, moving to the start
+                tip = (sx - (5 if j == -2 else 2), sy - (4 if j == -2 else 2))
+            prev = solve_tool("r", tip, brush, -10, 55, x, prev, strict=j >= 0)
+            A = clawd(f, x=x, arm_r=prev[0],
+                      look=(0.5, max(-0.45, min(0.45, (tip[1] - 80) / 50))))
         else:
-            A = clawd(f, x=prev[1], arm_r=45, eyes="happy")
+            A = clawd(f, x=x, arm_r=prev[0] + 10, eyes="happy")
+            _, tip = tool_line(f.hands["r"], prev[1] - 10, brush)
+            c = strokes[-1][0]
         # a small beret, tipped to one side
         f.poly([(-4.4, -9), (2.2, -9), (1.6, -10.3), (-1.5, -10.9),
                 (-3.9, -10.4)], "R", A)
         f.rect(-1.4, -11.6, 0.7, 0.8, "R", A)
-        if tip is not None:
-            hx, hy, _ = f.hands["r"]
-            f.bar(hx, hy, tip[0], tip[1], 2.5, "BR")
-            f.rect(tip[0] - 2, tip[1] - 2, 4, 4, c)
+        hx, hy, _ = f.hands["r"]
+        d = math.hypot(tip[0] - hx, tip[1] - hy) or 1.0
+        ux, uy = (tip[0] - hx) / d, (tip[1] - hy) / d
+        f.bar(hx - 4 * ux, hy - 4 * uy, tip[0] - 6 * ux, tip[1] - 6 * uy, 2.5, "BR")
+        f.bar(tip[0] - 6 * ux, tip[1] - 6 * uy, tip[0] - 3 * ux, tip[1] - 3 * uy,
+              2.5, "G1")                         # ferrule
+        f.bar(tip[0] - 3 * ux, tip[1] - 3 * uy, tip[0], tip[1], 3, c)
         out.append((f, FPS_MS))
     return out
 
@@ -1325,31 +1419,43 @@ def gear(f, cx, cy, r, teeth, deg, col, hub="G4"):
 
 
 def clip_churning():
-    """Churning: turning a crank that drives a train of gears; the gears
-    turn only as fast as the hand does."""
+    """Churning: pumping a rod that turns a flywheel -- the hand rides up
+    and down with the crank pin, the flywheel drives a train of gears, and
+    everything turns only as fast as the hand does. Feet planted."""
     out = []
     n = 36
-
-    def pose(a):
-        # the hand goes round: lean for the sideways part, the arm for up/down
-        return dict(x=CX - 30 + 5 * math.cos(a), arm_r=22 + 22 * math.sin(a),
-                    arm_l=0, look=(0.5, -0.3))
-    knobs = [pencil_tip(hands_at(**pose(2 * math.pi * t / n))["r"], 0, 6)
-             for t in range(n)]
-    gx = sum(k[0] for k in knobs) / n
-    gy = sum(k[1] for k in knobs) / n
+    x, rod, r = CX - 30, 21, 6
+    hx0, hy0, _ = hands_at(x=x, arm_r=0)["r"]
+    gx, gy = hx0 + 10, hy0 + 18
+    arms, prev = [], None
+    for lap in range(2):                   # twice round: the 2nd lap loops
+        for t in range(n):
+            th = 2 * math.pi * t / n
+            px, py = gx + r * math.cos(th), gy + r * math.sin(th)
+            best = None
+            for a, (hx, hy, _) in arm_table("r"):
+                err = math.hypot(hx + x - px, hy - py) - rod
+                cost = 30 * err * err + (0 if prev is None else 0.02 * (a - prev) ** 2)
+                if best is None or cost < best[0]:
+                    best = (cost, a, abs(err))
+            if best[2] > 1.5:
+                raise ValueError("crank out of reach")
+            prev = best[1]
+            if lap:
+                arms.append(prev)
     for t in range(n):
         f = Frame()
-        a = 2 * math.pi * t / n
-        kx, ky = knobs[t]
-        # the crank's angle IS the gear's angle: they turn with the hand
-        deg = math.degrees(math.atan2(ky - gy, kx - gx))
-        gear(f, gx, gy, 15, 10, deg, "G1")
-        gear(f, gx + 27, gy - 22, 10, 7, -deg * 15 / 10 + 12, "Y")
-        gear(f, gx + 29, gy + 24, 10, 7, -deg * 15 / 10 + 5, "G2")
-        f.bar(gx, gy, kx, ky, 4, "BRD")
-        clawd(f, **pose(a))
-        f.circle(kx, ky, 4, "R")
+        th = 2 * math.pi * t / n
+        deg = math.degrees(th)
+        gear(f, gx + 23, gy - 9, 9, 7, -deg * 12 / 9 + 10, "Y")
+        gear(f, gx + 35, gy - 27, 7, 6, deg * 12 / 7 + 4, "G2")
+        gear(f, gx, gy, 12, 9, deg, "G1")
+        clawd(f, x=x, arm_r=arms[t], look=(0.5, 0.35),
+              eyes="blink" if t == 25 else "open")
+        hx, hy, _ = f.hands["r"]
+        px, py = gx + r * math.cos(th), gy + r * math.sin(th)
+        f.bar(hx, hy, px, py, 3, "BRD")
+        f.circle(px, py, 3, "R")
         out.append((f, FPS_MS))
     return out
 

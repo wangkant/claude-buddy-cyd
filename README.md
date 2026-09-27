@@ -136,14 +136,14 @@ TCP on port 8788 — fine for a home network, not for an untrusted one.
 |---|---|---|---|
 | editing | Edit, Write, MultiEdit, NotebookEdit | tapping away at the keyboard under its monitor, or writing in a notepad | Editing… |
 | running | Bash (+ output / kill) | watching a terminal fill, or hammering a nail in a hard hat | Running… |
-| reading | Read, Grep, Glob, LS | reading a book, or sweeping a magnifier down a page | Reading… |
+| reading | Read, Grep, Glob, LS | reading a book in its glasses, or sweeping a magnifier along a page | Reading… |
 | searching | WebSearch, WebFetch | studying a spinning globe | Searching… |
 | planning | TodoWrite, ExitPlanMode | ticking off a clipboard | Planning… |
-| using tools | any MCP server tool (`mcp__…`) | plugging a cable in | Using tools… |
+| using tools | any MCP server tool (`mcp__…`) | plugging a cable into the wall | Using tools… |
 | delegating | Task (subagents) | sending little helpers off, or juggling | Delegating… |
 | thinking | a prompt was just sent | pondering under a thought cloud | Thinking… |
 | compacting | PreCompact (optional hook) | sweeping up | Compacting… |
-| anything else | — | a carousel: brewing, forging, conjuring, pondering, juggling, painting, cranking gears, stacking blocks on its head, vibing — with a whimsical verb ("Brewing…", "Conjuring…") in sync | Brewing… etc. |
+| anything else | — | a carousel: brewing, forging, conjuring, pondering, juggling, painting, pumping a gear train, stacking blocks on its head, vibing — with a whimsical verb ("Brewing…", "Conjuring…") in sync | Brewing… etc. |
 
 Each new tool event nudges Clawd to another clip of the same activity, so the
 animation keeps pace with Claude.
@@ -477,7 +477,7 @@ platformio.ini  build configuration (partitions.csv: flash layout)
   character, © Anthropic, PBC. The sprites are drawn in code by
   `tools/art/clawd_gen.py` (earlier releases used sprites adapted from
   [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk)).
-- **Reference:** [claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy) (MIT).
+- **Animated character inspired by** [claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy) (MIT).
 - **CYD pinouts & community:** [witnessmenow/ESP32-Cheap-Yellow-Display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display) (MIT).
 
 > **Disclaimer.** This is an unofficial, personal fan project. It is **not
