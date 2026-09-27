@@ -847,51 +847,58 @@ def clip_searching():
 
 
 def clip_planning():
-    """Planning a to-do list on a clipboard: the pencil moves down to each
-    box and ticks it -- the green check is the path its point just drew."""
-    n, per, rows = 60, 15, 4
+    """Planning a to-do list: a clipboard stands on the floor beside Clawd;
+    the pencil in the right hand travels to each box in turn and ticks it --
+    the green check is exactly the path its point drew -- then a happy look
+    at the finished list."""
+    board = (CX + 20, GROUND - 76, 58, 76)       # stands on the floor
+    rows = 4
+    pencil = 20
+    boxes = [(board[0] + 13, board[1] + 18 + i * 15) for i in range(rows)]
 
-    def pose(i, k):
-        # glide from the previous row to row i, then tick (see tip_of)
-        prev = (i - 1) % rows
-        row = i if k >= 0.3 else prev + (i - prev) * ease(k / 0.3)
-        return dict(x=CX - 32, arm_r=18 - 14 * row, arm_l=0,
-                    look=(0.5, 0.05 * row)), 0.0
+    def tick_path(bx, by):
+        """Down into the box, then a longer stroke up and to the right."""
+        a, b, c = (bx - 3, by - 1), (bx, by + 3), (bx + 7, by - 6)
+        return [a, ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), b,
+                ((b[0] * 2 + c[0]) / 3, (b[1] * 2 + c[1]) / 3),
+                ((b[0] + c[0] * 2) / 3, (b[1] + c[1] * 2) / 3), c]
 
-    def tip_of(i, k):
-        p, flick = pose(i, k)
-        h = hands_at(**p)["r"]
-        # the tick: down-right a little, then a longer stroke up-right
-        q = max(0.0, min(1.0, (k - 0.35) / 0.4))
-        dx = 9 * q
-        dy = 5 * min(q, 0.35) / 0.35 - 11 * max(0.0, q - 0.35) / 0.65
-        x, y = pencil_tip(h, 40, 22)
-        return x + dx, y + dy
-    boxes = [tip_of(i, 0.35) for i in range(rows)]
-    ticks = [[tip_of(i, 0.35 + 0.4 * s / 8) for s in range(9)] for i in range(rows)]
-    bx0 = min(b[0] for b in boxes) - 12
-    by0 = min(b[1] for b in boxes) - 18
-    board = (bx0, by0, 62, max(b[1] for b in boxes) - by0 + 22)
+    ticks = [tick_path(*b) for b in boxes]
+    # the plan: per row, travel (pencil lifted) then the tick, then a pause
+    plan = []
+    for i in range(rows):
+        start = ticks[i][0]
+        came = ticks[i - 1][-1] if i else (start[0] - 8, start[1] - 14)
+        for q in (0.25, 0.5, 0.75, 1.0):
+            lift = 5 * math.sin(math.pi * q)
+            plan.append((i, -1, (came[0] + (start[0] - came[0]) * q,
+                                 came[1] + (start[1] - came[1]) * q - lift)))
+        for j, pt in enumerate(ticks[i]):
+            plan.append((i, j, pt))
+        plan.append((i, len(ticks[i]) - 1, ticks[i][-1]))
+    plan += [(rows, 0, None)] * 8
     out = []
-    for t in range(n):
+    prev = None
+    for i, j, tip in plan:
         f = Frame()
         f.rect(*board, "BR")
-        f.rect(board[0] + 4, board[1] + 6, board[2] - 8, board[3] - 10, "W")
-        f.rect(board[0] + board[2] / 2 - 10, board[1] - 4, 20, 8, "G2")
-        i, s = min(rows - 1, t // per), t % per
-        k = s / per
-        for j, (x, y) in enumerate(boxes):
-            f.rect(x - 3, y - 5, 10, 10, "G2")
-            f.rect(x - 2, y - 4, 8, 8, "W")
-            f.rect(x + 12, y - 1, 30, 3, "G1")
-            done = j < i or (j == i and k >= 0.75)
-            path = ticks[j] if done else (
-                ticks[j][:int(8 * max(0, k - 0.35) / 0.4) + 1] if j == i else [])
+        f.rect(board[0] + 4, board[1] + 7, board[2] - 8, board[3] - 11, "W")
+        f.rect(board[0] + board[2] / 2 - 10, board[1] - 3, 20, 8, "G2")
+        f.rect(board[0] - 4, GROUND - 3, board[2] + 8, 3, "BRD")   # its foot
+        for r, (bx, by) in enumerate(boxes):
+            f.rect(bx - 5, by - 5, 10, 10, "G2")
+            f.rect(bx - 4, by - 4, 8, 8, "W")
+            f.rect(bx + 9, by - 1, 26 - (r % 2) * 8, 3, "G1")
+            path = ticks[r] if r < i else (ticks[r][:j + 1] if r == i and j >= 0 else [])
             for a, b in pairwise(path):
                 f.bar(*a, *b, 2.4, "GR")
-        p, _ = pose(i, k)
-        clawd(f, **p)
-        draw_pencil(f, f.hands["r"], tip_of(i, k))
+        if tip is None:                          # all done
+            clawd(f, x=prev[1], arm_r=40, eyes="happy")
+        else:
+            arm, x = solve_tip("r", tip, pencil, x=CX - 28, shift=10, prev=prev)
+            prev = (arm, x)
+            clawd(f, x=x, arm_r=arm, look=(0.5, (tip[1] - GROUND + 40) / 60))
+            draw_pencil(f, f.hands["r"], tip)
         out.append((f, FPS_MS))
     return out
 
@@ -1359,30 +1366,33 @@ def reach(side, target_y):
 
 
 def clip_stacking():
-    """Stacking: the left hand takes the top block off the pile beside it,
-    lifts it up along its side and sets it on Clawd's own head -- a tower
-    that grows block by block, wobbles, and tumbles off (poof)."""
+    """Stacking blocks on its own head: the left hand reaches down, picks up
+    the top block of the pile, swings up and tosses it -- the block flies in
+    an arc and lands on the tower on Clawd's head (a little squash as it
+    lands), eyes following it all the way. Four high, a wobble, a tumble,
+    poof."""
     cols = ("R", "Y", "B", "GR")
     bw, bh = 18, 13
-    per = 18
+    per = 20
     n = per * 4 + 14
-    _, low = reach("l", GROUND - bh * 2)
-    pile_x = low[0] - bw / 2 - 6
     head_y = GROUND - 9 * U                     # top of the body
+    _, low = reach("l", GROUND - bh * 2)
+    pile_x = low[0] - bw / 2 - 4
     out = []
     for t in range(n):
         f = Frame()
         placed = min(4, t // per)
         k = (t % per) / per if placed < 4 else (t - per * 4) / 14
         left = 4 - placed
-        taken = placed < 4 and k >= 0.25
-        for i in range(left - (1 if taken else 0)):
+        picked = placed < 4 and k >= 0.2
+        for i in range(left - (1 if picked else 0)):   # the pile
             f.rect(pile_x, GROUND - bh * (i + 1), bw, bh, cols[3 - i])
             f.rect(pile_x, GROUND - bh * (i + 1), bw, 2, "W")
         if placed == 4:                          # wobble, then tumble + poof
             sway = 3 * math.sin(k * 14) * (1 - k)
             clawd(f, eyes="wide" if k > 0.45 else "happy",
-                  arm_l=30 + 20 * math.sin(k * 14), arm_r=30 - 20 * math.sin(k * 14))
+                  arm_l=30 + 20 * math.sin(k * 14),
+                  arm_r=30 - 20 * math.sin(k * 14))
             if k < 0.45:
                 for i in range(4):
                     x = CX - bw / 2 + sway * (i + 1)
@@ -1393,36 +1403,49 @@ def clip_stacking():
                 for j in range(8):
                     a = j * math.pi / 4
                     f.circle(CX + 26 * q * math.cos(a),
-                             head_y - 26 + 16 * q * math.sin(a), 5 * (1 - q) + 1,
-                             "G1")
+                             head_y - 26 + 16 * q * math.sin(a),
+                             5 * (1 - q) + 1, "G1")
             out.append((f, FPS_MS))
             continue
         c = cols[placed]
-        # the tower on the head so far
+        top = head_y - bh * placed               # where this block lands
+        pick, _ = reach("l", GROUND - bh * left + bh / 2)
+        land = 0.8 <= k < 0.9
+        block = None
+        if k < 0.2:                              # reach down to the pile
+            q = ease(k / 0.2)
+            pose = dict(arm_l=pick * q, look=(-0.5, 0.4))
+        elif k < 0.45:                           # grab it and swing up
+            q = ease((k - 0.2) / 0.25)
+            pose = dict(arm_l=pick + (95 - pick) * q,
+                        look=(-0.5 + 0.2 * q, 0.4 - 0.8 * q))
+        else:                                    # released: the arm drops
+            q = min(1.0, (k - 0.45) / 0.35)
+            pose = dict(arm_l=95 - 95 * ease(q), squash=0.95 if land else 1.0,
+                        look=(-0.3 + 0.3 * q, -0.45))
+        clawd(f, **pose)
+        hx, hy, _ = f.hands["l"]
+        if k < 0.2:
+            block = None if k < 0.18 else (hx - bw / 2, hy - bh + 4)
+        elif k < 0.45:                           # held on the hand
+            block = (hx - bw / 2, hy - bh + 4)
+        elif k < 0.8:                            # in flight: an arc onto the tower
+            q = (k - 0.45) / 0.35
+            r = hands_at(arm_l=95)["l"]
+            x0, y0 = r[0] - bw / 2, r[1] - bh + 4
+            x1, y1 = CX - bw / 2, top - bh
+            apex = min(y0, y1) - 24
+            bx = x0 + (x1 - x0) * q
+            by = (1 - q) ** 2 * y0 + 2 * (1 - q) * q * apex + q * q * y1
+            block = (bx, by)
+        else:                                    # landed on the tower
+            block = (CX - bw / 2, top - bh)
         for i in range(placed):
             f.rect(CX - bw / 2, head_y - bh * (i + 1), bw, bh, cols[i])
             f.rect(CX - bw / 2, head_y - bh * (i + 1), bw, 2, "W")
-        pick, _ = reach("l", GROUND - bh * left + bh / 2)
-        if k < 0.25:                             # reach down to the pile
-            q = ease(k / 0.25)
-            clawd(f, arm_l=pick * q, look=(-0.5, 0.4))
-        elif k < 0.7:                            # lift it up the side
-            q = ease((k - 0.25) / 0.45)
-            clawd(f, arm_l=pick + (95 - pick) * q, look=(-0.5 + 0.4 * q, 0.4 - 0.9 * q))
-            hx, hy, _ = f.hands["l"]
-            f.rect(hx - bw / 2 + 2, hy - bh - 1, bw, bh, c)
-            f.rect(hx - bw / 2 + 2, hy - bh - 1, bw, 2, "W")
-        else:                                    # slide it onto the tower
-            q = ease((k - 0.7) / 0.3)
-            clawd(f, arm_l=95 - 95 * q, look=(0, -0.5 + 0.5 * q),
-                  eyes="happy" if q > 0.8 else "open")
-            top = (CX - bw / 2, head_y - bh * (placed + 1))
-            h95 = hands_at(arm_l=95)["l"]
-            src = (h95[0] - bw / 2 + 2, h95[1] - bh - 1)
-            x = src[0] + (top[0] - src[0]) * q
-            y = src[1] + (top[1] - src[1]) * q - 6 * math.sin(math.pi * q)
-            f.rect(x, y, bw, bh, c)
-            f.rect(x, y, bw, 2, "W")
+        if block is not None:
+            f.rect(block[0], block[1], bw, bh, c)
+            f.rect(block[0], block[1], bw, 2, "W")
         out.append((f, FPS_MS))
     return out
 
