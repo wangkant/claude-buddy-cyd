@@ -4,7 +4,7 @@
 #include "app/ctx.h"
 #include "app/activity.h"
 #include "app/battery.h"
-#include "net/ble.h"
+#include "net/hub.h"
 #include "render/character.h"
 #include "ui/text.h"
 #include "ui/theme.h"
@@ -133,7 +133,7 @@ void renderBatteryIfChanged() {
 // card's on-screen y; yOrg shifts it into canvas space (0 = the screen).
 static void drawBudgetBar(TFT_eSPI &c, int W, int cyAbs, int yOrg,
                           const ui::CardPal &p) {
-  net::AppState &s = net::ble.state();
+  net::AppState &s = net::hub.state();
   int bx = 20, bw = W - 40, by = cyAbs - yOrg + 38, bh = 4;
   c.fillRoundRect(bx, by, bw, bh, 2, p.divider); // track
   double frac = s.budget > 0 ? (double)dToday / (double)s.budget : 0;
@@ -148,7 +148,7 @@ static void drawBudgetBar(TFT_eSPI &c, int W, int cyAbs, int yOrg,
 // Card headline text: while busy, the device-rotated whimsy verb (synced to the
 // animation); otherwise the hook activity msg, else project, else name.
 static const char *headlineText(const char *st) {
-  net::AppState &s = net::ble.state();
+  net::AppState &s = net::hub.state();
   if (!strcmp(st, "busy"))
     return WHIMSY[verbIdx];
   if (isWork(st)) // tool-specific activity -> its own verb
@@ -177,7 +177,7 @@ static const char *headlineText(const char *st) {
 // incremental painters' caches so post-paint rolling updates stay coherent.
 void drawStatsPage(TFT_eSPI &c, int yOrg, const char *st,
                    const ui::CardPal &p, bool live) {
-  net::AppState &s = net::ble.state();
+  net::AppState &s = net::hub.state();
   int W = tft().width(), H = tft().height();
   int cyA = REG_Y + REG_H + 4; // absolute card y (layout is screen geometry)
   int cy = cyA - yOrg;
@@ -228,7 +228,7 @@ void renderHeadline(const char *st) {
 // their own.
 void renderStatusBar(const char *st) {
   TFT_eSPI &t = tft();
-  net::AppState &s = net::ble.state();
+  net::AppState &s = net::hub.state();
   int W = t.width();
   t.fillCircle(13, 13, 5, stateColor(st));
   blitText(26, 2, (W - 84) - 26, 24, stateLabel(st), 26, 14, &FreeSansBold9pt7b,
@@ -238,7 +238,7 @@ void renderStatusBar(const char *st) {
 
 void renderStatic(const char *st) {
   TFT_eSPI &t = tft();
-  net::AppState &s = net::ble.state();
+  net::AppState &s = net::hub.state();
   int W = t.width(), H = t.height();
 
   // top status bar
@@ -269,7 +269,7 @@ void renderStatic(const char *st) {
 }
 
 void seedStats() {
-  net::AppState &s = net::ble.state();
+  net::AppState &s = net::hub.state();
   dToday = s.tokens;
   dAll = s.tokensAll;
   dTools = s.tools;
@@ -278,7 +278,7 @@ void seedStats() {
 }
 
 void rollStats(uint32_t now, const char *st) {
-  net::AppState &s = net::ble.state();
+  net::AppState &s = net::hub.state();
   static uint32_t lastRoll = 0;
   if (now - lastRoll <= 40)
     return;

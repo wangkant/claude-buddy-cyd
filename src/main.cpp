@@ -5,7 +5,10 @@
 #include "hal/touch.h"
 #include "hal/led.h"
 #include "render/character.h"
+#include "net/hub.h"
+#include "net/usb_link.h"
 #include "net/ble.h"
+#include "net/wifi_link.h"
 #include "app/ctx.h"
 #include "app/activity.h"
 #include "app/led_language.h"
@@ -31,6 +34,13 @@ static hal::Display display;
 static hal::Storage storage;
 static hal::Touch touch;
 static hal::Led led;
+
+// The three ways a host (the PC bridge) can reach the buddy. All carry the
+// same envelopes through net::hub; the bridge picks one (USB > BLE > WiFi by
+// default). WiFi stays powered down until it's given credentials over USB.
+static net::UsbTransport usbLink;
+static net::BleTransport bleLink;
+static net::WifiTransport wifiLink(storage);
 
 // transient animation window (triple-tap easter egg)
 static uint32_t dizzyUntil = 0;
@@ -107,7 +117,7 @@ static inline bool timeBefore(uint32_t a, uint32_t b) {
   return (int32_t)(a - b) < 0;
 }
 static const char *stateName(uint32_t now) {
-  net::AppState &s = net::ble.state();
+  net::AppState &s = net::hub.state();
   if (timeBefore(now, fxUntil))
     return fxState.c_str(); // transient hook effect (attention/celebrate/heart)
   if (timeBefore(now, dizzyUntil))
@@ -256,7 +266,7 @@ static void pollBootButton(uint32_t now) {
   if (!screenOn) { // short press: wake ...
     wakeScreen();
     forceRedraw = true;
-  } else if (net::ble.state().waiting && !waitAcked) { // ... or "Got it"
+  } else if (net::hub.state().waiting && !waitAcked) { // ... or "Got it"
     waitAcked = true;
     forceRedraw = true;
   }
@@ -268,6 +278,7 @@ static void pollBootButton(uint32_t now) {
 // signal; the module's protection board guards the cell) -- so near the end
 // we just checkpoint everything more often to shrink the loss window.
 static void pollBattery(uint32_t now) {
+  battery::setWifi(net::hub.state().wifi != "off"); // joined or still joining
   battery::tick(now, screenOn, effectiveBright());
   if (screenOn && !settingsOpen && !statsOpen && !askOpen)
     renderBatteryIfChanged(); // home/needs-you top bar owns the glyph cell
@@ -281,9 +292,12 @@ static void pollBattery(uint32_t now) {
 }
 
 void setup() {
+  // USB is also a host link: a whole ~400 B envelope must fit the RX buffer
+  // while the loop is busy (a card slide blocks ~250 ms). Set before begin().
+  Serial.setRxBufferSize(1024);
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n[CYD Buddy] BLE + official Clawd character");
+  Serial.println("\n[CYD Buddy] USB / BLE / WiFi + official Clawd character");
 
   display.begin();
   ui::begin(display);
@@ -301,10 +315,10 @@ void setup() {
   display.setBrightness(effectiveBright());
   display.backlight(true);
 
-  net::ble.setToken(loadOrCreateToken(storage));
+  net::hub.setToken(loadOrCreateToken(storage));
   // also shown at the bottom of Settings; the serial copy is for a first
   // setup over USB (pio device monitor)
-  Serial.printf("[ble] token=%s\n", net::ble.state().token.c_str());
+  Serial.printf("[hub] token=%s\n", net::hub.state().token.c_str());
 
   // restore the last stats snapshot so a replug shows the previous numbers
   // immediately (the next hook event re-asserts the authoritative totals).
@@ -316,10 +330,18 @@ void setup() {
   // connects.
   seedStats();
 
-  net::ble.begin(); // instant: starts advertising, no provisioning to wait on
-
+  // The character's 72 KB sprite is the largest single allocation, so it goes
+  // first; the radios (NimBLE, and WiFi when configured) take their heap after.
   haveChar = render::character.begin(display, "/clawd");
   Serial.printf("char=%d\n", haveChar);
+
+  net::hub.add(&usbLink);
+  net::hub.add(&bleLink);
+  net::hub.add(&wifiLink);
+  net::hub.setWifiHooks(
+      [](const char *ssid, const char *pass) { wifiLink.configure(ssid, pass); },
+      [] { wifiLink.off(); });
+  net::hub.begin(); // BLE advertises at once; WiFi joins if it has credentials
 
   display.tft().fillScreen(TFT_BLACK);
   renderStatic(stateName(millis()));
@@ -330,8 +352,8 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
-  net::ble.loop();
-  net::AppState &s = net::ble.state();
+  net::hub.loop();
+  net::AppState &s = net::hub.state();
   display.tick(now); // step any backlight glide (pre-sleep fade, auto-dim)
   pollAmbient(now);  // ambient-light night-dim ("Brightness: auto")
   pollBattery(now);  // battery gauge tick + glyph + low-battery guard
@@ -525,8 +547,12 @@ void loop() {
       handleSettingsTap(tx, ty);
     }
     wasTouched = t;
-    if (forceRedraw && settingsOpen) {
+    // repaint on request, or when WiFi / the links moved (the WiFi line shows
+    // "connecting..." until the address arrives)
+    static uint32_t shownNet = 0;
+    if (settingsOpen && (forceRedraw || s.netSeq != shownNet)) {
       forceRedraw = false;
+      shownNet = s.netSeq;
       renderSettings();
     }
     delay(5);

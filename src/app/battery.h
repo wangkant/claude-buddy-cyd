@@ -14,6 +14,7 @@ namespace battery {
 
 void begin(hal::Storage &storage); // restore used-mAh; learn/refill on boot
 void tick(uint32_t now, bool screenOn, int brightPct); // integrate, ~10 s
+void setWifi(bool on); // the WiFi radio is on: add its draw to the model
 int percent();                                         // 0..100
 float hoursLeft(bool screenOn, int brightPct);         // at the present draw
 void noteDeepSleep();  // stamp the RTC clock; call just before deep sleep

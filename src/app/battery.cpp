@@ -14,6 +14,8 @@ static const float MA_BASE = 90.0f;  // board + ESP32 + BLE, screen dark. First
                                      // guess (the WiFi build measured ~143);
                                      // the death-anchored capacity calibration
                                      // absorbs the error over cycles.
+static const float MA_WIFI = 53.0f; // WiFi joined on top of BLE: the WiFi
+                                    // build measured ~143 vs the 90 above
 static const float MA_BL_FULL = 95.0f;      // backlight's own draw at 100%
 static const float MA_SLEEP = 10.0f;        // deep sleep incl. boost idle draw
 static const float USABLE_MAH = CAPACITY_MAH * USABLE_FRACTION;
@@ -39,8 +41,13 @@ static uint32_t nowSec() {
   return (uint32_t)tv.tv_sec;
 }
 
+static bool g_wifi = false; // the WiFi radio is on (joining or joined)
+
+void setWifi(bool on) { g_wifi = on; }
+
 static float drawMa(bool screenOn, int brightPct) {
-  return screenOn ? MA_BASE + MA_BL_FULL * brightPct / 100.0f : MA_BASE;
+  float base = MA_BASE + (g_wifi ? MA_WIFI : 0.0f);
+  return screenOn ? base + MA_BL_FULL * brightPct / 100.0f : base;
 }
 
 void begin(hal::Storage &storage) {
