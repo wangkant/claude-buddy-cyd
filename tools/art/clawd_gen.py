@@ -162,9 +162,39 @@ def hands_at(**pose):
     return d.hands
 
 
+_ARM_TABLE = {}
+
+
+def arm_table(side):
+    """Hand positions for every arm angle, Clawd standing at x=0."""
+    if side not in _ARM_TABLE:
+        _ARM_TABLE[side] = [(a, hands_at(x=0, **{"arm_" + side: a})[side])
+                            for a in range(-75, 101)]
+    return _ARM_TABLE[side]
+
+
+def solve_tip(side, target, length, x=CX, shift=8, prev=None):
+    """Inverse kinematics for a held tool: the arm angle and body x (within
+    +-shift px of x) that put the tip of a `length`-px tool in that hand on
+    world point `target`. `prev` = the last frame's (angle, x), so motion
+    stays smooth instead of jumping between equally good poses."""
+    tx, ty = target
+    best = None
+    for a, (hx0, hy, _) in arm_table(side):
+        for dx in range(-shift, shift + 1):
+            hx = hx0 + x + dx
+            err = (math.hypot(tx - hx, ty - hy) - length) ** 2 + 0.25 * dx * dx
+            if prev is not None:
+                err += 0.015 * (a - prev[0]) ** 2 + 0.2 * (x + dx - prev[1]) ** 2
+            if best is None or err < best[0]:
+                best = (err, a, x + dx)
+    return best[1], best[2]
+
+
 # ---- Clawd --------------------------------------------------------------------
 def clawd(f, x=CX, y=GROUND, tilt=0.0, squash=1.0, eyes="open", look=(0, 0),
-          arm_l=0.0, arm_r=0.0, legs="stand", blush=False, lift=0.0):
+          arm_l=0.0, arm_r=0.0, legs="stand", blush=False, lift=0.0,
+          arms_only=False):
     """Draw Clawd in its original design and return its transform.
 
     (x, y): ground point under the body centre. tilt: degrees about that
@@ -172,10 +202,12 @@ def clawd(f, x=CX, y=GROUND, tilt=0.0, squash=1.0, eyes="open", look=(0, 0),
     arm_l / arm_r: degrees an arm is raised (0 = level, 90 = straight up,
     negative = lowered). legs: stand / walkA / walkB / tuck. lift raises the
     body off the ground by that many units (a hop). Hand positions (world
-    px, at the arm tips) land in f.hands["l"/"r"] with their angles."""
+    px, at the arm tips) land in f.hands["l"/"r"] with their angles.
+    arms_only redraws just the arms -- for hands resting ON something drawn
+    in front of the body (a keyboard on a desk)."""
     A = mul(tr(x, y - lift * U), mul(rot(tilt), sc(U / squash, U * squash)))
     # legs (under the body)
-    for i, lx in enumerate((-5, -3, 2, 4)):
+    for i, lx in enumerate(() if arms_only else (-5, -3, 2, 4)):
         up = (legs == "tuck" or (legs == "walkA" and i % 2 == 0)
               or (legs == "walkB" and i % 2 == 1))
         f.rect(lx, -2, 1, 1.2 if up else 2, "O", A)
@@ -195,6 +227,8 @@ def clawd(f, x=CX, y=GROUND, tilt=0.0, squash=1.0, eyes="open", look=(0, 0),
         hx, hy = ap(A, sx0 + dx * 2.35, sy0 + dy * 2.35)
         wdeg = math.degrees(math.atan2(*reversed(ap_dir(A, dx, dy))))
         f.hands[side] = (hx, hy, wdeg)
+    if arms_only:
+        return A
     # body
     f.rect(-6, -9, 12, 7, "O", A)
     face(f, A, eyes, look, blush)
@@ -282,12 +316,24 @@ def headphones(f, A):
     f.rect(5.5, -8.4, 1.6, 3.2, "B", A)
 
 
-def hammer(f, side, deg, head="G2"):
-    """Hammer in a hand: handle along deg, head at the far end."""
-    A = held(f, side, deg)
-    f.rect(-0.3, -0.25, 3.6, 0.5, "BR", A)
-    f.rect(3.1, -0.9, 1.0, 1.8, head, A)
-    return ap(A, 3.6, 0.9)  # the striking face
+def hammer(f, side, deg, head="G2", mirror=False):
+    """A hammer gripped in a hand: handle along `deg`, a head across its end.
+    The striking face is on the head's +y side (-y when mirrored, for a
+    left-handed swing). Returns the face's centre (world px)."""
+    A = mul(held(f, side, deg), sc(1, -1 if mirror else 1))
+    f.rect(-0.4, -0.28, HAMMER_LEN + 0.4, 0.56, "BR", A)
+    f.rect(HAMMER_LEN - 0.55, -1.35, 1.1, 2.7, head, A)
+    f.rect(HAMMER_LEN - 0.55, 1.05, 1.1, 0.3, "G3", A)
+    return ap(A, HAMMER_LEN, 1.35)
+
+
+HAMMER_LEN = 3.6   # units, grip to the head's centre
+
+
+def hammer_face(hand, deg, mirror=False):
+    hx, hy, _ = hand
+    A = mul(tr(hx, hy), mul(rot(deg), sc(U, -U if mirror else U)))
+    return ap(A, HAMMER_LEN, 1.35)
 
 
 def magnifier(f, x, y, r=1.4, handle_deg=45, rim="G1", to=None):
@@ -451,52 +497,87 @@ def clip_pondering():
     return out
 
 
-def monitor(f, x, y, w, h, t, lines):
-    """A monitor at world px with coloured code lines typing in."""
+def monitor(f, x, y, w, h, chars, lines):
+    """A monitor showing code typed so far: `chars` characters spread over
+    `lines` [(colour, indent, length)], scrolling once the screen is full,
+    with a blinking cursor after the last one."""
     f.rect(x, y, w, h, "G3")
     f.rect(x + 4, y + 4, w - 8, h - 8, "NV")
     for i, c in enumerate(("R", "Y", "GR")):
         f.rect(x + 6 + i * 6, y + 6, 3, 3, c)
-    f.rect(x + w / 2 - 6, y + h, 12, 7, "G2")
-    f.rect(x + w / 2 - 16, y + h + 7, 32, 4, "G2")
-    shown = t
-    yy = y + 14
-    for i, (c, ind, ln) in enumerate(lines):
-        k = max(0, min(ln, shown))
-        shown -= ln
-        if k:
-            f.rect(x + 8 + ind * 6, yy + i * 6, k * 4, 3, c)
-        if shown < 0:
-            if t % 6 < 3:  # cursor
-                f.rect(x + 8 + ind * 6 + k * 4 + 1, yy + i * 6 - 1, 3, 5, "W")
+    rows = (h - 18) // 6
+    done, left = [], chars
+    for c, ind, ln in lines * 4:
+        k = min(ln, left)
+        done.append((c, ind, k))
+        left -= k
+        if left <= 0:
             break
+    shown = done[-rows:]
+    for i, (c, ind, k) in enumerate(shown):
+        if k:
+            f.rect(x + 8 + ind * 6, y + 14 + i * 6, k * 4 - 1, 3, c)
+    last = shown[-1]
+    cx = x + 8 + last[1] * 6 + last[2] * 4
+    f.rect(cx, y + 13 + (len(shown) - 1) * 6, 2, 5, "W")
 
 
-def keyboard(f, x, y, w, t, hit=None):
-    f.rect(x, y, w, 12, "G3")
-    f.rect(x + 1, y + 1, w - 2, 10, "G2")
+def keyboard(f, x0, x1, y, pressed=()):
+    """A keyboard seen from the front, x0..x1 wide; keys in `pressed`
+    (column indices of the top row) are down and lit."""
+    f.rect(x0, y, x1 - x0, 12, "G3")
+    f.rect(x0 + 1, y + 1, x1 - x0 - 2, 10, "G2")
+    cols = int((x1 - x0 - 6) // 8)
     for r in range(2):
-        for k in range(int((w - 6) // 7)):
-            kx, ky = x + 4 + k * 7, y + 2 + r * 5
-            pressed = hit is not None and (k + r * 3) % 7 == hit
-            f.rect(kx, ky, 5, 3, "W" if pressed else "G1")
+        for i in range(cols):
+            kx = x0 + 4 + i * 8
+            down = r == 0 and i in pressed
+            f.rect(kx, y + 2 + r * 5 + (1 if down else 0), 6, 3,
+                   "W" if down else "G1")
+    return cols
+
+
+def key_under(x0, x, cols):
+    return max(0, min(cols - 1, int(round((x - x0 - 7) / 8))))
 
 
 def clip_typing():
-    """At the keyboard, eyes on the monitor: hands tap alternately on the
-    keys while code fills the screen."""
-    out = []
-    code = [("P", 0, 5), ("B", 1, 8), ("GR", 2, 6), ("Y", 2, 4), ("C", 1, 9),
-            ("PK", 0, 3)]
+    """At the desk: both hands rest on the keyboard and tap in turn -- the
+    key under the tapping hand goes down and lights, and each tap puts one
+    more character on the monitor."""
+    code = [("P", 0, 6), ("B", 1, 9), ("GR", 2, 7), ("Y", 2, 4), ("C", 1, 10),
+            ("PK", 0, 3), ("B", 1, 8), ("GR", 2, 5)]
+    rest, press = -14, -24
+    lh = hands_at(arm_l=rest)["l"]
+    rh = hands_at(arm_r=rest)["r"]
+    kb_y = round(max(lh[1], rh[1]) + 5)          # under the resting hands
+    kb_x0, kb_x1 = round(lh[0] - 16), round(rh[0] + 16)
+    cols = int((kb_x1 - kb_x0 - 6) // 8)
+    order = "LRLLRLRRLRLR"                       # which hand taps, in turn
     n = 48
+    out = []
     for t in range(n):
         f = Frame()
-        monitor(f, 57, 2, 76, 52, t, code)
-        left = t % 4 < 2
-        clawd(f, y=GROUND - 2, arm_l=-28 if left else -12,
-              arm_r=-12 if left else -28, look=(0, -0.45),
-              eyes="blink" if t == 30 else "open")
-        keyboard(f, 49, 112, 92, t, hit=(t * 3) % 7)
+        taps = t // 2 + 1                        # the screen hovers above,
+        monitor(f, CX - 44, 2, 88, 50, taps * 2 - 1, code)  # as in the original
+        tapping = t % 2 == 0
+        side = order[(t // 2) % len(order)]
+        al = press if tapping and side == "L" else rest
+        ar = press if tapping and side == "R" else rest
+        glance = 18 <= t % 24 < 21
+        clawd(f, arm_l=al, arm_r=ar, look=(0, 0.45) if glance else (0, -0.45),
+              eyes="blink" if t == 33 else "open")
+        # the desk in front (it hides the legs), keyboard on top of it
+        f.rect(kb_x0 - 10, kb_y + 12, kb_x1 - kb_x0 + 20, GROUND - kb_y - 8, "BR")
+        f.rect(kb_x0 - 10, kb_y + 12, kb_x1 - kb_x0 + 20, 3, "BRD")
+        pressed = ()
+        if tapping:
+            hx = f.hands["l" if side == "L" else "r"][0]
+            pressed = (key_under(kb_x0, hx, cols),)
+        keyboard(f, kb_x0, kb_x1, kb_y, pressed)
+        # the arms again, on top: hands resting on the keys, the tapping one
+        # pressing down into them
+        clawd(f, arm_l=al, arm_r=ar, arms_only=True)
         out.append((f, FPS_MS))
     return out
 
@@ -515,39 +596,43 @@ def draw_pencil(f, hand, tip, body="Y"):
     f.rect(tip[0] - 1, tip[1] - 1, 2.5, 2.5, "G3")
 
 
+def handwriting(x0, y, width, seed):
+    """A wavy handwriting line: letter humps along a baseline."""
+    n = max(2, int(width // 2))
+    return [(x0 + width * i / n, y - abs(math.sin(i * 0.9 + seed)) * 3.2)
+            for i in range(n + 1)]
+
+
 def clip_writing():
-    """Writing on a notepad: the pencil stays in the right hand, and every
-    mark on the page is exactly where its point went (a wavy handwriting
-    line per pass, then the next line down)."""
-    n, per, lines = 56, 14, 4
-
-    def pose(i, k):
-        # leaning across the line and letting the pencil wobble = handwriting
-        return dict(x=CX - 27 + 6 * k, arm_r=-6 - 11 * i,
-                    arm_l=0, look=(0.5, 0.4))
-
-    def tip_of(i, k):
-        h = hands_at(**pose(i, k))["r"]
-        return pencil_tip(h, 38 + 9 * math.sin(k * 5 * math.pi))
-    trails = [[tip_of(i, s / per) for s in range(per + 1)] for i in range(lines)]
-    xs = [p[0] for tr_ in trails for p in tr_]
-    ys = [p[1] for tr_ in trails for p in tr_]
-    pad = (min(xs) - 8, min(ys) - 8, max(xs) - min(xs) + 16, max(ys) - min(ys) + 14)
+    """Writing in a notepad on the desk: the pencil stays in the right hand
+    and the handwriting appears exactly under its point, line after line
+    (the arm and a small step of the body reach along each line)."""
+    pad = (CX + 16, GROUND - 60, 50, 44)
+    pencil = 18
+    lines = [handwriting(pad[0] + 6, pad[1] + 13 + i * 9,
+                         22 if i == 3 else 36, i) for i in range(4)]
+    plan = []
+    for li, pts in enumerate(lines):
+        plan += [(li, -1)] * 2 + [(li, j) for j in range(len(pts))]
     out = []
-    for t in range(n):
+    prev = None
+    for t, (li, j) in enumerate(plan):
         f = Frame()
-        i, s = min(lines - 1, t // per), t % per
-        f.rect(pad[0] - 3, GROUND - 22, pad[2] + 6, 22, "BR")      # desk
-        f.rect(pad[0] - 3, GROUND - 22, pad[2] + 6, 3, "BRD")
-        f.rect(*pad, "W")                                          # notepad
-        f.rect(pad[0], pad[1], pad[2], 3, "R")
-        for j in range(i):
-            for a, b in pairwise(trails[j]):
+        f.rect(pad[0] - 8, GROUND - 16, pad[2] + 22, 16, "BR")      # desk
+        f.rect(pad[0] - 8, GROUND - 16, pad[2] + 22, 3, "BRD")
+        f.rect(*pad, "W")                                           # notepad
+        f.rect(pad[0], pad[1], pad[2], 4, "R")
+        for k in range(li + 1):
+            pts = lines[k] if k < li else lines[k][:max(0, j + 1)]
+            for a, b in pairwise(pts):
                 f.bar(*a, *b, 1.6, "BD")
-        for a, b in pairwise(trails[i][:s + 1]):
-            f.bar(*a, *b, 1.6, "BD")
-        clawd(f, **pose(i, s / per))
-        draw_pencil(f, f.hands["r"], trails[i][s])
+        pts = lines[li]
+        tip = pts[j] if j >= 0 else (pts[0][0] - 2, pts[0][1] - 5)
+        arm, x = solve_tip("r", tip, pencil, x=CX - 30, prev=prev)
+        prev = (arm, x)
+        clawd(f, x=x, arm_r=arm, look=(0.5, 0.35),
+              eyes="blink" if t == 30 else "open")
+        draw_pencil(f, f.hands["r"], tip)
         out.append((f, FPS_MS))
     return out
 
@@ -580,72 +665,112 @@ def clip_terminal():
     return out
 
 
-def swing(t, period=12):
-    """Hammer swing curve: slow raise, fast strike, short rest. Returns
-    (angle of the arm, hammer angle, struck-now)."""
-    p = (t % period) / period
-    if p < 0.55:                      # raise
-        k = ease(p / 0.55)
-        return 10 + 70 * k, -80 * k, False
-    if p < 0.7:                       # strike
-        k = (p - 0.55) / 0.15
-        return 80 - 95 * k, -80 + 150 * k, False
-    return -15, 70, p < 0.8           # on the nail (first frame = impact)
+def strike_pose(side, target, x, mirror=False):
+    """(arm angle, hammer angle) whose striking face lands on `target`, with
+    the handle pointing out and a little down -- how a hammer meets a nail."""
+    best = None
+    sgn = -1 if side == "l" else 1
+    for a in range(-60, 31):
+        hand = hands_at(x=x, **{"arm_" + side: a})[side]
+        for hd in range(0, 61, 2):
+            deg = hd if sgn > 0 else 180 - hd
+            fx, fy = hammer_face(hand, deg, mirror)
+            err = (fx - target[0]) ** 2 + (fy - target[1]) ** 2 + 0.02 * (hd - 25) ** 2
+            if best is None or err < best[0]:
+                best = (err, a, deg)
+    return best[1], best[2]
+
+
+WINDUP = {"r": (80, -120), "l": (80, 300)}
+
+
+def swing_frame(k, impact, side):
+    """One frame of a hammer blow (k = 0..11): raise over 6 frames, hold,
+    strike, IMPACT at k=8, then rest on the work. Returns (arm, hammer deg,
+    struck-now)."""
+    a0, h0 = impact
+    a1, h1 = WINDUP[side]
+    if k < 6:                                   # back and up, easing
+        q = ease((k + 1) / 6)
+        return a0 + (a1 - a0) * q, h0 + (h1 - h0) * q, False
+    if k == 6:
+        return a1, h1, False
+    if k == 7:                                  # the blow, most of the way
+        return a1 + (a0 - a1) * 0.65, h1 + (h0 - h1) * 0.65, False
+    return a0, h0, k == 8                       # impact, then rest on it
 
 
 def clip_hammering():
-    """Hard hat on, hammering a nail into a board: the hammer pivots in the
-    hand, each strike drives the nail in, sparks on impact."""
+    """Hard hat on, driving a nail into a board: each blow winds up over the
+    shoulder, comes down with the hammer's face square on the nail head
+    (sparks, a little squash) and knocks it one step in; three blows, flush,
+    and a fresh nail."""
+    x = CX - 6
+    board_top = GROUND - 9
+    probe = hands_at(x=x, arm_r=-25)["r"]
+    nail_x = round(hammer_face(probe, 25)[0])
+    lengths = (13, 9, 5, 1)                     # visible nail before each blow
+    poses = [strike_pose("r", (nail_x + 1, board_top - lengths[i] - 2), x)
+             for i in range(3)]
     out = []
-    n = 36
-    for t in range(n):
+    for t in range(36):
         f = Frame()
-        f.rect(140, 118, 46, 10, "BR")
-        f.rect(140, 128, 46, 3, "BRD")
-        hits = t // 12
-        nail = 12 - 4 * min(2, hits) - (4 if (t % 12) / 12 >= 0.7 else 0)
-        nail = max(0, nail)
-        f.rect(160, 118 - nail, 2, nail, "G1")
-        f.rect(157, 117 - nail, 8, 2, "G1")
-        arm, hdeg, struck = swing(t)
-        A = clawd(f, x=CX + 6, squash=0.97 if struck else 1.0, arm_r=arm,
-                  arm_l=0, look=(0.5, 0.35) if arm < 40 else (0.4, -0.2))
-        hard_hat(f, A)
-        hammer(f, "r", hdeg)
+        hit, k = t // 12, t % 12
+        after = k >= 9                          # this blow has landed
+        vis = lengths[hit + 1] if after else lengths[hit]
+        f.rect(nail_x - 26, board_top, 58, 9, "BR")
+        f.rect(nail_x - 26, board_top + 7, 58, 2, "BRD")
+        f.rect(nail_x, board_top - vis, 2, vis, "G1")
+        f.rect(nail_x - 2, board_top - vis - 2, 6, 2, "G1")
+        arm, deg, struck = swing_frame(k, poses[hit], "r")
+        pose = dict(x=x, squash=0.96 if struck else 1.0, arm_r=arm,
+                    look=(0.5, 0.45))
+        hard_hat(f, clawd(Dry(), **pose))       # hat first: the raised arm
+        clawd(f, **pose)                        # passes in front of the brim
+        hammer(f, "r", deg)
         if struck:
-            for sx, sy in ((153, 106), (170, 104), (166, 98), (150, 112)):
-                glyph(f, sx, sy, SPARK, "Y", 1.5)
+            for sx, sy in ((-9, -4), (7, -6), (10, -1), (-6, -9)):
+                glyph(f, nail_x + sx, board_top - vis + sy, SPARK, "Y", 1.5)
         out.append((f, FPS_MS))
     return out
 
 
 def clip_reading():
-    """Reading glasses on, a book held open in both hands; the eyes run
-    along the lines and a page turns."""
+    """Reading glasses on, an open book held by its two outer edges in both
+    hands, just below the eyes; the eyes run along a line and drop to the
+    next, and every so often a page turns."""
     out = []
     n = 60
+    lh = hands_at(arm_l=-20)["l"]
+    rh = hands_at(arm_r=-20)["r"]
+    x0, x1 = lh[0] - 2, rh[0] + 2
+    top = GROUND - 5 * U + 1                     # just under the eyes
+    h = 22
+    mid = (x0 + x1) / 2
     for t in range(n):
         f = Frame()
-        read = (t % 20) / 20
-        A = clawd(f, arm_l=-35, arm_r=-35,
-                  look=(-0.4 + 0.8 * read, 0.35))
-        glasses(f, A, look=(0, 0))
-        # the book: open, held low in front, pages with text
-        bx, by = CX - 34, GROUND - 38
-        f.rect(bx - 3, by - 2, 74, 34, "BD")
-        f.rect(bx, by, 33, 29, "W")
-        f.rect(bx + 35, by, 33, 29, "W")
-        f.rect(bx + 33, by - 2, 2, 31, "BD")
-        for i in range(4):
-            f.rect(bx + 4, by + 5 + i * 6, 25, 2, "G1")
-            f.rect(bx + 39, by + 5 + i * 6, 25, 2, "G1")
+        line = (t // 10) % 3
+        along = (t % 10) / 9
+        A = clawd(f, arm_l=-20, arm_r=-20,
+                  look=(-0.45 + 0.9 * along, 0.2 + 0.15 * line),
+                  eyes="blink" if t == 47 else "open")
+        glasses(f, A)
+        f.rect(x0, top, x1 - x0, h, "BD")                   # cover
+        f.rect(x0 + 3, top + 2, mid - x0 - 4, h - 5, "W")   # left page
+        f.rect(mid + 1, top + 2, x1 - mid - 4, h - 5, "W")  # right page
+        f.rect(mid - 1, top, 2, h, "BD")                    # spine
+        for i in range(3):
+            f.rect(x0 + 7, top + 5 + i * 5, mid - x0 - 12, 2, "G1")
+            f.rect(mid + 5, top + 5 + i * 5, x1 - mid - 12, 2, "G1")
         turn = t % 30
-        if 24 <= turn < 30:                      # page flipping over
-            k = (turn - 24) / 5
-            px = bx + 35 + 33 * (1 - 2 * k)
-            f.poly([(bx + 34, by), (px, by - 6 * math.sin(math.pi * k)),
-                    (px, by + 29 - 6 * math.sin(math.pi * k)),
-                    (bx + 34, by + 29)], "G1" if k > 0.5 else "W")
+        if 25 <= turn < 30:                                 # a page turning over
+            k = (turn - 25) / 4
+            px = mid + (x1 - mid - 4) * (1 - 2 * k)
+            lift = 5 * math.sin(math.pi * k)
+            f.poly([(mid, top + 2), (px, top + 2 - lift),
+                    (px, top + h - 3 - lift), (mid, top + h - 3)],
+                   "G1" if k > 0.5 else "W")
+        clawd(f, arm_l=-20, arm_r=-20, arms_only=True)      # hands grip the edges
         out.append((f, FPS_MS))
     return out
 
@@ -1047,26 +1172,32 @@ def clip_brewing():
 
 
 def clip_forging():
-    """Forging: hammering glowing metal on an anvil; it cools between heats,
-    sparks fly on each strike."""
+    """Forging at the anvil (left-handed): the same full blow as hammering,
+    the face landing on the glowing bar each time; sparks fly, and the bar
+    cools from orange to red between heats."""
+    x = CX + 22
+    bar_top = 88
+    anvil_cx = 34
+    pose = strike_pose("l", (anvil_cx, bar_top), x, mirror=True)
     out = []
-    n = 36
-    for t in range(n):
+    for t in range(36):
         f = Frame()
-        # anvil (left)
-        f.poly([(6, 90), (60, 90), (54, 98), (14, 98)], "G2")
-        f.rect(22, 98, 24, 16, "G3")
-        f.rect(12, 114, 44, 10, "G2")
-        heat = "FL" if t % 36 < 24 else "R"
-        f.rect(18, 85, 34, 5, heat)
-        arm, hdeg, struck = swing(t)
-        clawd(f, x=CX + 22, squash=0.97 if struck else 1.0, arm_l=arm,
-                  arm_r=0, look=(-0.5, 0.3) if arm < 40 else (-0.4, -0.2))
-        # hammer in the left hand (mirror the swing)
-        hammer(f, "l", 180 - hdeg)
+        f.poly([(anvil_cx - 30, 92), (anvil_cx + 26, 92), (anvil_cx + 20, 100),
+                (anvil_cx - 22, 100)], "G2")
+        f.poly([(anvil_cx - 30, 92), (anvil_cx - 40, 94), (anvil_cx - 30, 97)], "G2")
+        f.rect(anvil_cx - 11, 100, 22, 16, "G3")
+        f.rect(anvil_cx - 20, 116, 40, 10, "G2")
+        f.rect(anvil_cx - 22, 126, 44, GROUND - 126, "G3")
+        f.rect(anvil_cx - 16, bar_top, 32, 4, "FL" if t < 24 else "R")
+        k = t % 12
+        arm, deg, struck = swing_frame(k, pose, "l")
+        clawd(f, x=x, squash=0.96 if struck else 1.0, arm_l=arm,
+              look=(-0.5, 0.4))
+        hammer(f, "l", deg, mirror=True)
         if struck:
-            for sx, sy in ((20, 72), (42, 66), (52, 76), (30, 60), (58, 70)):
-                glyph(f, sx, sy, SPARK, "Y" if sx % 4 else "FL", 1.6)
+            for sx, sy in ((-14, -6), (10, -8), (16, -2), (-8, -12), (2, -14)):
+                glyph(f, anvil_cx + sx, bar_top + sy, SPARK,
+                      "Y" if sx % 4 else "FL", 1.6)
         out.append((f, FPS_MS))
     return out
 
@@ -1104,46 +1235,75 @@ def clip_conjuring():
     return out
 
 
+def stroke_paths():
+    """The picture, stroke by stroke, in canvas coordinates (50 x 56):
+    a sun, a hill, a tree trunk and its crown, a red flower."""
+    sun = [(35 + 6 * math.cos(a / 10 * 2 * math.pi),
+            13 + 6 * math.sin(a / 10 * 2 * math.pi)) for a in range(11)]
+    hill = [(4 + 42 * i / 10, 47 - 11 * math.sin(math.pi * i / 10))
+            for i in range(11)]
+    trunk = [(14, 44 - 14 * i / 6) for i in range(7)]
+    crown = [(14 + 6 * math.cos(a / 10 * 2 * math.pi + 1.5),
+              25 + 5 * math.sin(a / 10 * 2 * math.pi + 1.5)) for a in range(11)]
+    flower = [(31, 45), (31, 40), (29, 38), (31, 36), (33, 38), (31, 40)]
+    return [("Y", sun), ("GR", hill), ("BR", trunk), ("GD", crown),
+            ("R", flower)]
+
+
 def clip_painting():
-    """Painting: beret on, brush in the right hand; each colour goes on the
-    canvas exactly where the brush tip sweeps, one stroke after another."""
-    cols = ("R", "Y", "B", "GR", "PK")
-    n, per = 60, 12
-
-    def pose(i, k):
-        return dict(x=CX - 37 + 6 * k, arm_r=58 - 13 * i,
-                    arm_l=0, look=(0.5, -0.3 + 0.12 * i))
-
-    def tip_of(i, k):
-        h = hands_at(**pose(i, k))["r"]
-        return pencil_tip(h, -8 + 22 * math.sin(k * math.pi), 26)
-    trails = [[tip_of(i, s / per) for s in range(per + 1)]
-              for i in range(len(cols))]
-    xs = [p[0] for tr_ in trails for p in tr_]
-    ys = [p[1] for tr_ in trails for p in tr_]
-    cv = (min(xs) - 8, min(ys) - 8, max(xs) - min(xs) + 16, max(ys) - min(ys) + 16)
+    """Painting a little landscape: beret on, the brush in the right hand;
+    every stroke is laid down exactly where the brush tip travels (the arm
+    and a small step of the body reach each point), the brush lifted in
+    between strokes, then a happy look at the result."""
+    cv = (CX + 12, 46, 50, 56)
+    brush = 28
+    strokes = stroke_paths()
+    plan = []
+    for si, (_, path) in enumerate(strokes):
+        plan += [(si, -2), (si, -1)] + [(si, j) for j in range(len(path))]
+    plan += [(len(strokes), 0)] * 8
     out = []
-    for t in range(n):
+    prev = None
+    for si, j in plan:
         f = Frame()
-        f.bar(cv[0] + 8, cv[1] + cv[3], cv[0], GROUND, 3, "BR")   # easel legs
-        f.bar(cv[0] + cv[2] - 8, cv[1] + cv[3], cv[0] + cv[2], GROUND, 3, "BR")
+        f.bar(cv[0] + 10, cv[1] + cv[3], cv[0] + 2, GROUND, 3, "BR")
+        f.bar(cv[0] + cv[2] - 10, cv[1] + cv[3], cv[0] + cv[2] - 2, GROUND, 3, "BR")
         f.rect(cv[0] + cv[2] / 2 - 2, cv[1] - 8, 4, 10, "BR")
-        f.rect(*cv, "W")                                          # canvas
-        f.rect(cv[0] - 2, cv[1] + cv[3], cv[2] + 4, 4, "BRD")
-        i, s = min(len(cols) - 1, t // per), t % per
-        for j in range(i):
-            for a, b in pairwise(trails[j]):
-                f.bar(*a, *b, 4.5, cols[j])
-        for a, b in pairwise(trails[i][:s + 1]):
-            f.bar(*a, *b, 4.5, cols[i])
-        A = clawd(f, **pose(i, s / per))
-        # beret: small, tipped to one side
-        f.poly([(-4.6, -9), (3.4, -9), (2.8, -10.4), (-3.8, -10.7)], "R", A)
-        f.rect(-1.6, -11.4, 0.8, 0.9, "R", A)
-        hx, hy, _ = f.hands["r"]
-        tip = trails[i][s]
-        f.bar(hx - 2, hy + 2, tip[0], tip[1], 3, "BR")            # brush
-        f.rect(tip[0] - 2.5, tip[1] - 2.5, 5, 5, cols[i])
+        f.rect(*cv, "W")
+        f.rect(cv[0] - 3, cv[1] + cv[3], cv[2] + 6, 4, "BRD")
+        for k in range(min(si + 1, len(strokes))):
+            c, path = strokes[k]
+            upto = len(path) if k < si else j + 1
+            pts = [(cv[0] + px, cv[1] + py) for px, py in path[:max(0, upto)]]
+            for a, b in pairwise(pts):
+                f.bar(*a, *b, 4, c)
+            if len(pts) == 1:
+                f.rect(pts[0][0] - 2, pts[0][1] - 2, 4, 4, c)
+        tip = None
+        if si < len(strokes):
+            c, path = strokes[si]
+            sx, sy = cv[0] + path[0][0], cv[1] + path[0][1]
+            if j >= 0:
+                tip = (cv[0] + path[j][0], cv[1] + path[j][1])
+            else:                                  # lifted, moving to the start
+                tip = (sx - 10, sy - 8) if j == -2 else (sx - 4, sy - 4)
+            arm, x = solve_tip("r", tip, brush, x=CX - 40, shift=12, prev=prev)
+            prev = (arm, x)
+            hx, hy, _ = hands_at(x=x, arm_r=arm)["r"]
+            reach_err = abs(math.hypot(tip[0] - hx, tip[1] - hy) - brush)
+            assert reach_err < 6, "brush can't reach %s (off by %.1f px)" % (tip, reach_err)
+            A = clawd(f, x=x, arm_r=arm,
+                      look=(0.5, max(-0.45, min(0.45, (tip[1] - 60) / 60))))
+        else:
+            A = clawd(f, x=prev[1], arm_r=45, eyes="happy")
+        # a small beret, tipped to one side
+        f.poly([(-4.4, -9), (2.2, -9), (1.6, -10.3), (-1.5, -10.9),
+                (-3.9, -10.4)], "R", A)
+        f.rect(-1.4, -11.6, 0.7, 0.8, "R", A)
+        if tip is not None:
+            hx, hy, _ = f.hands["r"]
+            f.bar(hx, hy, tip[0], tip[1], 2.5, "BR")
+            f.rect(tip[0] - 2, tip[1] - 2, 4, 4, c)
         out.append((f, FPS_MS))
     return out
 

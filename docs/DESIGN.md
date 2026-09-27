@@ -267,8 +267,11 @@ renderer and the transports never race and no locking is needed.
   held props pivot about the shoulder / hand, bodies bob and squash),
   rasterised at 4× and point-sampled — crisp, one 32-colour palette, frames
   at 190×140 so they render 1:1; ~1 MB for 29 clips (the previous hand-made
-  120×126 pack was ~1.2 MB for 17). Props are held in the hands and marks
-  appear where a tool's tip actually went (pencil, brush, tick, magnifier). Every frame is written whole
+  120×126 pack was ~1.2 MB for 17). Props are held in the hands; where a
+  tool's tip must land (a key, a nail head, each point of a brush stroke or
+  handwriting), a small inverse-kinematics search picks the arm angle and a
+  step of the body so the tip really gets there, and the mark is drawn where
+  it went. Every frame is written whole
   (disposal 2, no transparency) because the renderer maps transparency to
   black and its state-entry pop redraws frames at another scale. States:
   sleep, 3 idle variants, a 9-clip busy carousel, a clip set per tool-aware

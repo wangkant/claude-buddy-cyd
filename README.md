@@ -134,8 +134,8 @@ TCP on port 8788 — fine for a home network, not for an untrusted one.
 
 | Claude is… | Tools | Clawd is… | Verb |
 |---|---|---|---|
-| editing | Edit, Write, MultiEdit, NotebookEdit | typing at a monitor, or writing on paper | Editing… |
-| running | Bash (+ output / kill) | watching a terminal fill, or hammering in a hard hat | Running… |
+| editing | Edit, Write, MultiEdit, NotebookEdit | tapping away at the keyboard under its monitor, or writing in a notepad | Editing… |
+| running | Bash (+ output / kill) | watching a terminal fill, or hammering a nail in a hard hat | Running… |
 | reading | Read, Grep, Glob, LS | reading a book, or sweeping a magnifier down a page | Reading… |
 | searching | WebSearch, WebFetch | studying a spinning globe | Searching… |
 | planning | TodoWrite, ExitPlanMode | ticking off a clipboard | Planning… |
