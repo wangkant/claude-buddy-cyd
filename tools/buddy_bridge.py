@@ -819,7 +819,27 @@ def cli(argv):
         except OSError:
             print("no bridge running")
         return 0
-    if a.cmd == "wifi" and not a.off and not a.ssid:
+    if a.cmd == "status":
+        # a running bridge answers at once; only start one (and give it a
+        # moment to find the buddy) if none is up
+        try:
+            st = _client(port, "GET", "/", timeout=5)[1]
+        except ConnectionRefusedError:
+            st = _connected_bridge(port, wait_s=25)
+        except OSError:
+            st = None
+        if st is None:
+            print("no bridge could be started on port %d" % port)
+            return 1
+        if not st.get("connected"):
+            print("bridge running; the buddy isn't reachable right now "
+                  "(USB / BLE / WiFi)")
+            return 1
+        dev = st.get("device") or {}
+        print("link: %s   wifi: %s %s" % (st.get("link"), dev.get("wifi", "?"),
+                                          dev.get("ip", "")))
+        return 0
+    if not a.off and not a.ssid:
         ap.error("wifi needs an SSID (or --off)")
     print("waiting for the buddy (plug in the USB cable for WiFi setup)...")
     st = _connected_bridge(port)
@@ -829,11 +849,6 @@ def cli(argv):
     if not st.get("connected"):
         print("bridge is up but the buddy isn't reachable (USB / BLE / WiFi)")
         return 1
-    dev = st.get("device") or {}
-    if a.cmd == "status":
-        print("link: %s   wifi: %s %s" % (st.get("link"), dev.get("wifi", "?"),
-                                          dev.get("ip", "")))
-        return 0
     body = {"off": True} if a.off else {"ssid": a.ssid, "pass": a.password}
     code, r = _client(port, "POST", "/wifi", body)
     if code != 200:
