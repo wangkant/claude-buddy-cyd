@@ -55,28 +55,40 @@ static void drawCell(int cx, int y, const char *v, uint16_t col,
            C_CARD, TC_DATUM, maxW);
 }
 
+// The six value-cell strings, formatted from the animated counters in ONE place
+// so the incremental painter and the full-page paint can't disagree.
+struct StatText {
+  char tok[12], all[12], dur[14], nt[8], nu[8], ns[8];
+};
+static void formatStats(StatText &o) {
+  fmtTok(dToday, o.tok, sizeof(o.tok));
+  fmtTok(dAll, o.all, sizeof(o.all));
+  fmtDur(ctx.sessionStart ? (millis() - ctx.sessionStart) : 0, o.dur,
+         sizeof(o.dur));
+  snprintf(o.nt, sizeof(o.nt), "%d", dTools);
+  snprintf(o.nu, sizeof(o.nu), "%d", dTurns);
+  snprintf(o.ns, sizeof(o.ns), "%d", dSess);
+}
+
 // last-drawn text per stat cell: drawStatValues repaints only cells whose text
-// changed; drawStatsPage syncs these on a full paint so the two stay coherent
-static char pT[12], pA[12], pD[14], pNt[8], pNu[8], pNs[8];
+// changed; drawStatsPage syncs this on a full paint so the two stay coherent
+static StatText prevStats;
 
 // Draw the six value cells from the animated counters (labels are drawn once by
 // renderStatic). force=true redraws all (after a full card repaint); otherwise
 // only cells whose text changed are redrawn, so a settled value never flickers.
 static void drawStatValues(int W, int cy, bool force) {
-  char tok[12], all[12], dur[14], nt[8], nu[8], ns[8];
-  fmtTok(dToday, tok, sizeof(tok));
-  fmtTok(dAll, all, sizeof(all));
-  fmtDur(ctx.sessionStart ? (millis() - ctx.sessionStart) : 0, dur, sizeof(dur));
-  snprintf(nt, sizeof(nt), "%d", dTools);
-  snprintf(nu, sizeof(nu), "%d", dTurns);
-  snprintf(ns, sizeof(ns), "%d", dSess);
+  StatText v;
+  formatStats(v);
+  const StatText &p = prevStats;
   int yA = cy + 54, yB = cy + 96;
-  if (force || strcmp(tok, pT)) { strcpy(pT, tok); drawCell(W / 4, yA, tok, C_CORAL, &FreeSansBold12pt7b, 20, W / 2 - 24); }
-  if (force || strcmp(all, pA)) { strcpy(pA, all); drawCell(W * 3 / 4, yA, all, C_CORAL, &FreeSansBold12pt7b, 20, W / 2 - 24); }
-  if (force || strcmp(nt, pNt)) { strcpy(pNt, nt); drawCell(W / 8, yB, nt, C_TEXT, &FreeSansBold9pt7b, 15, W / 4 - 8); }
-  if (force || strcmp(nu, pNu)) { strcpy(pNu, nu); drawCell(W * 3 / 8, yB, nu, C_TEXT, &FreeSansBold9pt7b, 15, W / 4 - 8); }
-  if (force || strcmp(ns, pNs)) { strcpy(pNs, ns); drawCell(W * 5 / 8, yB, ns, C_TEXT, &FreeSansBold9pt7b, 15, W / 4 - 8); }
-  if (force || strcmp(dur, pD)) { strcpy(pD, dur); drawCell(W * 7 / 8, yB, dur, C_TEXT, &FreeSansBold9pt7b, 15, W / 4 - 8); }
+  if (force || strcmp(v.tok, p.tok)) drawCell(W / 4, yA, v.tok, C_CORAL, &FreeSansBold12pt7b, 20, W / 2 - 24);
+  if (force || strcmp(v.all, p.all)) drawCell(W * 3 / 4, yA, v.all, C_CORAL, &FreeSansBold12pt7b, 20, W / 2 - 24);
+  if (force || strcmp(v.nt, p.nt)) drawCell(W / 8, yB, v.nt, C_TEXT, &FreeSansBold9pt7b, 15, W / 4 - 8);
+  if (force || strcmp(v.nu, p.nu)) drawCell(W * 3 / 8, yB, v.nu, C_TEXT, &FreeSansBold9pt7b, 15, W / 4 - 8);
+  if (force || strcmp(v.ns, p.ns)) drawCell(W * 5 / 8, yB, v.ns, C_TEXT, &FreeSansBold9pt7b, 15, W / 4 - 8);
+  if (force || strcmp(v.dur, p.dur)) drawCell(W * 7 / 8, yB, v.dur, C_TEXT, &FreeSansBold9pt7b, 15, W / 4 - 8);
+  prevStats = v;
 }
 
 void renderIntensity() {
@@ -184,33 +196,23 @@ void drawStatsPage(TFT_eSPI &c, int yOrg, const char *st,
   gtextC(c, "Turns", W * 3 / 8, yB, &FreeSans9pt7b, p.muted, p.card, TC_DATUM);
   gtextC(c, "Sess", W * 5 / 8, yB, &FreeSans9pt7b, p.muted, p.card, TC_DATUM);
   gtextC(c, "Time", W * 7 / 8, yB, &FreeSans9pt7b, p.muted, p.card, TC_DATUM);
-  char tok[12], all[12], dur[14], nt[8], nu[8], ns[8];
-  fmtTok(dToday, tok, sizeof(tok));
-  fmtTok(dAll, all, sizeof(all));
-  fmtDur(ctx.sessionStart ? (millis() - ctx.sessionStart) : 0, dur,
-         sizeof(dur));
-  snprintf(nt, sizeof(nt), "%d", dTools);
-  snprintf(nu, sizeof(nu), "%d", dTurns);
-  snprintf(ns, sizeof(ns), "%d", dSess);
+  StatText v;
+  formatStats(v);
   // same anchors as drawCell: TC_DATUM at y+20 (12pt values) / y+15 (9pt)
-  gtextC(c, tok, W / 4, yA + 20, &FreeSansBold12pt7b, p.coral, p.card, TC_DATUM);
-  gtextC(c, all, W * 3 / 4, yA + 20, &FreeSansBold12pt7b, p.coral, p.card,
+  gtextC(c, v.tok, W / 4, yA + 20, &FreeSansBold12pt7b, p.coral, p.card,
          TC_DATUM);
-  gtextC(c, nt, W / 8, yB + 15, &FreeSansBold9pt7b, p.text, p.card, TC_DATUM);
-  gtextC(c, nu, W * 3 / 8, yB + 15, &FreeSansBold9pt7b, p.text, p.card,
+  gtextC(c, v.all, W * 3 / 4, yA + 20, &FreeSansBold12pt7b, p.coral, p.card,
          TC_DATUM);
-  gtextC(c, ns, W * 5 / 8, yB + 15, &FreeSansBold9pt7b, p.text, p.card,
+  gtextC(c, v.nt, W / 8, yB + 15, &FreeSansBold9pt7b, p.text, p.card,
          TC_DATUM);
-  gtextC(c, dur, W * 7 / 8, yB + 15, &FreeSansBold9pt7b, p.text, p.card,
+  gtextC(c, v.nu, W * 3 / 8, yB + 15, &FreeSansBold9pt7b, p.text, p.card,
          TC_DATUM);
-  if (live) {
-    strcpy(pT, tok);
-    strcpy(pA, all);
-    strcpy(pD, dur);
-    strcpy(pNt, nt);
-    strcpy(pNu, nu);
-    strcpy(pNs, ns);
-  }
+  gtextC(c, v.ns, W * 5 / 8, yB + 15, &FreeSansBold9pt7b, p.text, p.card,
+         TC_DATUM);
+  gtextC(c, v.dur, W * 7 / 8, yB + 15, &FreeSansBold9pt7b, p.text, p.card,
+         TC_DATUM);
+  if (live)
+    prevStats = v;
 }
 
 void renderHeadline(const char *st) {

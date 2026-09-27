@@ -125,6 +125,15 @@ static const char *stateName(uint32_t now) {
 
 static int effectiveBright(); // ambient-light section below
 
+// Screen on: back to full CPU speed and light the backlight. Every wake path
+// (touch, BOOT key, fx/ask events, fresh work, nudge) goes through here; each
+// call site still sets its own gesture/redraw bookkeeping.
+static void wakeScreen() {
+  screenOn = true;
+  setCpuFrequencyMhz(240);
+  display.backlight(true);
+}
+
 static void handleSettingsTap(int x, int y) {
   for (int i = 0; i < 6; i++) {
     if (!inRect(setBtns[i], x, y))
@@ -245,9 +254,7 @@ static void pollBootButton(uint32_t now) {
     return; // this release ends the long-press; no short action too
   lastInteraction = now;
   if (!screenOn) { // short press: wake ...
-    screenOn = true;
-    setCpuFrequencyMhz(240);
-    display.backlight(true);
+    wakeScreen();
     forceRedraw = true;
   } else if (net::ble.state().waiting && !waitAcked) { // ... or "Got it"
     waitAcked = true;
@@ -342,9 +349,7 @@ void loop() {
     fxUntil = now + (s.fx == "attention" ? 5000UL : 3000UL);
     forceRedraw = true;
     if (!screenOn && !autoWakeBlocked()) { // DND: react silently, don't wake
-      screenOn = true;
-      setCpuFrequencyMhz(240); // back to full speed on wake
-      display.backlight(true);
+      wakeScreen();
       lastInteraction = now;
       wasTouched = true; // this wake isn't a tap
       pressStart = now;
@@ -360,11 +365,8 @@ void loop() {
     askOpen = true;
     askShownAt = now;
     settingsOpen = statsOpen = false;
-    if (!screenOn) {
-      screenOn = true;
-      setCpuFrequencyMhz(240); // back to full speed on wake
-      display.backlight(true);
-    }
+    if (!screenOn)
+      wakeScreen();
     lastInteraction = now;
     wasTouched = true;
     pressStart = now;
@@ -444,9 +446,7 @@ void loop() {
     if (touch.rawPressed() || runStarted || nudgeWake) {
       if (nudgeWake)
         lastNudgeWake = now; // fire the screen-wake just once per wait episode
-      screenOn = true;
-      setCpuFrequencyMhz(240); // back to full speed on wake
-      display.backlight(true);
+      wakeScreen();
       lastInteraction = now;
       forceRedraw = true;
       wasTouched = true; // consume this contact, don't fire a tap
