@@ -348,6 +348,27 @@ class TestStreamTransports(unittest.TestCase):
                                          link.loop).result(timeout=3)
         self._until(lambda: "bye" in self.dev.kinds())
 
+    def test_quit_stops_the_bridge(self):
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        with mock.patch.object(bb, "load_cfg", lambda: {}):
+            th = threading.Thread(target=bb.main,
+                                  args=(["--no-ble", "--port", str(port)],),
+                                  daemon=True)
+            th.start()
+            self.port = port
+            self._until(lambda: self._try_quit())
+            th.join(timeout=5)
+        self.assertFalse(th.is_alive())
+
+    def _try_quit(self):
+        try:
+            return self._req("POST", "/quit", {})[0] == 200
+        except OSError:
+            return False
+
     def test_wrong_token_never_connects(self):
         link = bb.Link({"token": "wrong",
                         "device": "127.0.0.1:%d" % self.dev.port})

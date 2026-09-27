@@ -16,6 +16,7 @@ CLI (talks to the running bridge, starting one if needed):
   python buddy_bridge.py status
   python buddy_bridge.py wifi "<ssid>" "<password>"   # over USB only
   python buddy_bridge.py wifi --off
+  python buddy_bridge.py stop                         # e.g. before flashing
 """
 import json
 import os
@@ -203,6 +204,7 @@ class Link:
         self.loop = None     # the worker's asyncio loop
         self.worker = None   # Worker, set in main()
         self.last_request = time.monotonic()
+        self.quit = False    # POST /quit: exit now
 
     def touch(self):
         self.last_request = time.monotonic()
@@ -708,6 +710,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(502, {"ok": False, "error": "write failed"})
         elif self.path == "/wifi":
             self._wifi(tok, body)
+        elif self.path == "/quit":
+            # free the USB port (e.g. to flash); the next hook event respawns
+            # a bridge, so this is only a pause
+            self._send(200, {"ok": True})
+            self.link.quit = True
         else:
             self._send(404, {"ok": False})
 
@@ -797,12 +804,21 @@ def cli(argv):
     ap = argparse.ArgumentParser(prog="buddy_bridge.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", help="show the link and the device's WiFi state")
+    sub.add_parser("stop", help="stop the running bridge (frees the USB port "
+                                "for flashing until the next hook event)")
     w = sub.add_parser("wifi", help="give the buddy WiFi credentials (over "
                                     "USB) or turn its WiFi off")
     w.add_argument("ssid", nargs="?")
     w.add_argument("password", nargs="?", default="")
     w.add_argument("--off", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd == "stop":
+        try:
+            _client(port, "POST", "/quit", {}, timeout=5)
+            print("bridge stopped")
+        except OSError:
+            print("no bridge running")
+        return 0
     if a.cmd == "wifi" and not a.off and not a.ssid:
         ap.error("wifi needs an SSID (or --off)")
     print("waiting for the buddy (plug in the USB cable for WiFi setup)...")
@@ -835,7 +851,7 @@ def cli(argv):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if argv and argv[0] in ("status", "wifi"):
+    if argv and argv[0] in ("status", "wifi", "stop"):
         return cli(argv)
     ap = argparse.ArgumentParser(description="CYD buddy bridge (USB/BLE/WiFi)")
     ap.add_argument("--port", type=int, default=None)
@@ -871,10 +887,11 @@ def main(argv=None):
         threading.Thread(target=lambda: asyncio.run(worker.run()),
                          daemon=True).start()
 
-    # Sole exit condition: Claude has gone quiet. (Device-absent costs ~zero
-    # while events still flow — the worker sits dormant, radio silent.)
-    while time.monotonic() - link.last_request < args.idle_exit:
-        time.sleep(5)
+    # Exit when Claude has gone quiet (device-absent costs ~zero while events
+    # still flow -- the worker sits dormant, radio silent), or on POST /quit.
+    while (not link.quit
+           and time.monotonic() - link.last_request < args.idle_exit):
+        time.sleep(0.5)
     if link.worker and link.loop:
         try:
             asyncio.run_coroutine_threadsafe(link.worker.goodbye(),
