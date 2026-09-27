@@ -17,7 +17,8 @@ void Display::begin() {
   // backlight pin itself, which would steal it back from LEDC and kill dimming.
   ledcSetup(BL_CH, BL_FREQ, BL_RES);
   ledcAttachPin(TFT_BL, BL_CH);
-  backlight(true);
+  // Backlight stays dark here: setup() lights it once the saved brightness
+  // (or night level) is known, so a boot / deep-sleep wake doesn't flash 100%.
   tft_.fillScreen(TFT_BLACK);
 }
 

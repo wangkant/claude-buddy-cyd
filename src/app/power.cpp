@@ -29,6 +29,11 @@ void powerOff(hal::Display &display, hal::Touch &touch, hal::Led &led,
   delay(200);
   display.backlight(false);
   led.off();
+  // Put the ILI9341 itself to sleep (SLPIN) so the controller doesn't sit in
+  // normal mode for the whole deep sleep. Every wake is a cold boot, and
+  // tft.init() soft-resets the panel and sends SLPOUT, so nothing to undo.
+  t.writecommand((uint8_t)0x10);
+  delay(5); // SLPIN settle time before the next command / power state
   esp_sleep_enable_ext0_wakeup((gpio_num_t)36, 0); // wake when PENIRQ goes low
   esp_deep_sleep_start();                           // does not return
 }

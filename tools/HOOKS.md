@@ -16,7 +16,8 @@ device is off.
 ```json
 { "token": "<the token shown on the device>" }
 ```
-The CYD shows its `token` under long-press → **Settings → Stats**. Optional
+The CYD shows its `token` at the bottom of long-press → **Settings** (it is also
+printed on the USB serial console at boot as `[ble] token=…`). Optional
 keys: `"port"` (move the bridge off `127.0.0.1:8787`), `"budget"` (daily token
 gauge), `"host"` (advanced: point the hook at a bridge on **another** machine,
 e.g. `"192.0.2.10:8787"` — see §4). One PC-side dependency:

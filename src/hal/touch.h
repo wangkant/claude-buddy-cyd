@@ -21,6 +21,8 @@ public:
   void begin(Display &disp, Storage &storage);
   bool read(int16_t &x, int16_t &y);  // mapped screen coords; true if pressed
   bool rawPressed();                   // is the panel being touched right now
+  void resetContact() { down_ = false; } // forget an open contact (screen off:
+                                         // waking then needs a real press)
   void calibrate(Display &disp);       // interactive 3-point, persists to NVS
 
 private:

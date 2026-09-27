@@ -19,10 +19,11 @@ void renderStats(bool full) {
               BC_DATUM);
   }
   // label left, value right-aligned to the screen edge and clamped so long
-  // values (IP / project / big token counts) can't run off the right side.
+  // values (project / big token counts) can't run off the right side.
   // dy=19 (was 20, before that 22): now 13 rows + the "tap to close" hint must
   // share 320px. Looser pitches push the last row's value-clear band into the
-  // hint and eat "to close" -> only "tap" survives. 19 lifts IP back to 276.
+  // hint and eat "to close" -> only "tap" survives. 19 keeps the last row
+  // (Link) at 276. The panel is full: the pairing token lives under Settings.
   int lx = 18, rx = W - 18, y = 48, dy = 19, vMax = W - 18 - 108;
   char b[24];
   auto row = [&](const char *k, const String &v) {

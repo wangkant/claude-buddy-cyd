@@ -231,8 +231,9 @@ driver/colour-order flags (e.g. `ST7789_DRIVER` + `TFT_RGB_ORDER=TFT_BGR`).
 
 1. **Flash** firmware + filesystem (above). The device boots straight to the
    dashboard and starts advertising over BLE — there is nothing to provision.
-2. **Read its token:** long-press → **Settings → Stats**. The token is a random
-   secret generated on the device.
+2. **Read its token:** long-press → **Settings** — it's the line under the
+   buttons (also printed on the USB serial console at boot as
+   `[ble] token=…`). The token is a random secret generated on the device.
 3. **Install the one PC dependency:** `python -m pip install bleak`
    (the BLE library the bridge uses; everything else is stdlib).
 4. **Tell your PC the secret** — `~/.claude/buddy.json`:
@@ -359,7 +360,8 @@ cold-boots straight back into the dashboard.
   Support Service"), then run any Claude turn to respawn the bridge. Also check
   `python -m pip show bleak` and that the device is within ~10 m.
 - **Numbers never update while connected** — check `buddy.json` (the token
-  must match the device's Settings → Stats), that the hooks are registered,
+  must match the one at the bottom of the device's Settings screen), that the
+  hooks are registered,
   and that Python 3 is on `PATH`. Events with a wrong token are dropped
   silently by design.
 - **Charging does nothing (battery setup)** — don't use a USB-C PD charger

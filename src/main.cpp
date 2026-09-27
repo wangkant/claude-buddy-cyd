@@ -302,6 +302,9 @@ void setup() {
   display.backlight(true);
 
   net::ble.setToken(loadOrCreateToken(storage));
+  // also shown at the bottom of Settings; the serial copy is for a first
+  // setup over USB (pio device monitor)
+  Serial.printf("[ble] token=%s\n", net::ble.state().token.c_str());
 
   // restore the last stats snapshot so a replug shows the previous numbers
   // immediately (the next hook event re-asserts the authoritative totals).
@@ -636,6 +639,9 @@ void loop() {
     historySaveIfChanged(storage, true);
     display.backlight(false);
     led.off();
+    // a contact still open at time-out (a resting finger/object) would keep
+    // the looser hold floor; waking the dark screen should need a real press
+    touch.resetContact();
     setCpuFrequencyMhz(80); // BLE stays connectable, and 80 MHz is the
                             // radio-safe floor -> lower idle draw, screen off
   } else if (screenOn) {

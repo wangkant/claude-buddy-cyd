@@ -1,6 +1,7 @@
 #include "settings.h"
 #include "layout.h"
 #include "app/ctx.h"
+#include "net/ble.h"
 #include "ui/text.h"
 #include "ui/theme.h"
 
@@ -28,6 +29,12 @@ void renderSettings() {
   for (int i = 0; i < 6; i++)
     ui::drawButton(setBtns[i], labels[i],
                    i == 0 ? C_NO : (i == 2 && app::ctx.dnd) ? 0x7B40 : C_FACE);
+  // The pairing secret for ~/.claude/buddy.json, in the free band under the
+  // buttons (the last ends at y=268). Worst-case width of "Token: " + 16 hex
+  // digits in FreeSans9pt is 220 px, so it never needs clamping at 240 px.
+  char tok[32];
+  snprintf(tok, sizeof(tok), "Token: %s", net::ble.state().token.c_str());
+  ui::gtext(tok, W / 2, 297, &FreeSans9pt7b, C_MUTED, TFT_BLACK, MC_DATUM);
 }
 
 } // namespace screens
