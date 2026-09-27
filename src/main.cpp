@@ -302,7 +302,8 @@ void setup() {
   historyRestore(storage);
   battery::begin(storage); // software fuel gauge (docs/battery-gauge-spec.md)
   // seed the odometer counters from the restored values so they read true at
-  // once instead of rolling up from zero on the first frame after WiFi connects.
+  // once instead of rolling up from zero on the first frame after the bridge
+  // connects.
   seedStats();
 
   net::ble.begin(); // instant: starts advertising, no provisioning to wait on
@@ -457,7 +458,7 @@ void loop() {
       // auto deep sleep: a long stretch with no touch AND no hook activity
       // means there is nothing to dashboard -- stop burning ~100 mA on a dark
       // idle loop and drop to ~10 mA deep sleep (tap to wake). A deep-sleeping
-      // board can't be woken by WiFi, so the leash is long: any Claude event
+      // board can't be woken over BLE, so the leash is long: any Claude event
       // inside the hour still lights the screen the moment work starts.
       bool noTouch = now - lastInteraction > AUTO_SLEEP_MS;
       bool noEvents = lastEventMs == 0 ? now > AUTO_SLEEP_MS
