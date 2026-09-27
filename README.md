@@ -2,12 +2,12 @@
 
 <p align="center">
   <img src="assets/typing.gif" width="152" alt="typing">
-  <img src="assets/painting.gif" width="152" alt="painting">
-  <img src="assets/brewing.gif" width="152" alt="brewing">
   <img src="assets/hammering.gif" width="152" alt="hammering">
+  <img src="assets/brewing.gif" width="152" alt="brewing">
+  <img src="assets/painting.gif" width="152" alt="painting">
   <img src="assets/conjuring.gif" width="152" alt="conjuring">
 </p>
-<p align="center"><sub>Clawd hard at work — typing&nbsp;·&nbsp;painting&nbsp;·&nbsp;brewing&nbsp;·&nbsp;hammering&nbsp;·&nbsp;conjuring</sub></p>
+<p align="center"><sub>Clawd hard at work — typing&nbsp;·&nbsp;hammering&nbsp;·&nbsp;brewing&nbsp;·&nbsp;painting&nbsp;·&nbsp;conjuring</sub></p>
 
 A desk companion for Claude Code: the orange **Clawd** mascot on a **Cheap
 Yellow Display** (ESP32) that mirrors your live Claude Code activity and usage
@@ -143,7 +143,7 @@ TCP on port 8788 — fine for a home network, not for an untrusted one.
 | delegating | Task (subagents) | sending little helpers off, or juggling | Delegating… |
 | thinking | a prompt was just sent | pondering under a thought cloud | Thinking… |
 | compacting | PreCompact (optional hook) | sweeping up | Compacting… |
-| anything else | — | a carousel: brewing, forging, conjuring, pondering, juggling, painting, churning gears, stacking blocks, vibing — with a whimsical verb ("Brewing…", "Conjuring…") in sync | Brewing… etc. |
+| anything else | — | a carousel: brewing, forging, conjuring, pondering, juggling, painting, cranking gears, stacking blocks on its head, vibing — with a whimsical verb ("Brewing…", "Conjuring…") in sync | Brewing… etc. |
 
 Each new tool event nudges Clawd to another clip of the same activity, so the
 animation keeps pace with Claude.
@@ -243,9 +243,11 @@ character system — is hardware-independent. To run it on another ESP32 + TFT:
   and manifest if you're tight).
 
 The Clawd art is a plain GIF pack (`data/clawd/` + `manifest.json` mapping
-states to clips), drawn entirely in code by `tools/art/clawd_gen.py`: 38×28
-pixel art on black that the device draws at exactly 5× (crisp, and the whole
-pack is ~125 KB). Tweak the generator and re-run it
+states to clips), drawn entirely in code by `tools/art/clawd_gen.py`. Clawd
+keeps its original design in every clip — the flat orange block, big black
+eyes, block arms and four legs — and only its actions and props change. The
+clips are 190×140 (the device's character box, so they render 1:1; ~1 MB for
+the whole pack). Tweak the generator and re-run it
 (`python tools/art/clawd_gen.py --sheet sheet.png` also writes a contact sheet
 to review), or drop in your own character — any size; the renderer fits it to
 its 190×140 box. `tools/test_art_pack.py` checks that every state the firmware

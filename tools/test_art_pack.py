@@ -1,7 +1,8 @@
 """Consistency checks for the Clawd GIF pack (data/clawd/) against its
 consumers: every state the firmware can enter and every activity the hook can
 send must have clips, and every clip must be in the shape the renderer
-expects (38x28, whole frames, no transparency -- see tools/art/clawd_gen.py).
+expects (190x140 = its character box, whole frames, no transparency -- see
+tools/art/clawd_gen.py).
 Run: cd tools && python -m unittest test_art_pack -v   (needs Pillow)"""
 import json
 import os
@@ -63,11 +64,11 @@ class TestPack(unittest.TestCase):
             if not name.endswith(".gif"):
                 continue
             with Image.open(os.path.join(PACK, name)) as im:
-                self.assertEqual(im.size, (38, 28), name)
+                self.assertEqual(im.size, (190, 140), name)
                 for i in range(im.n_frames):
                     im.seek(i)
                     self.assertNotIn("transparency", im.info, name)
-                    self.assertEqual(im.tile[0][1], (0, 0, 38, 28),
+                    self.assertEqual(im.tile[0][1], (0, 0, 190, 140),
                                      "%s frame %d is partial" % (name, i))
 
 

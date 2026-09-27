@@ -57,7 +57,7 @@ static bool g_open = false;
 
 // per-open draw geometry (set after the canvas size is known). The art is
 // scaled to fill BOX_W x BOX_H keeping its aspect -- up OR down; the shipped
-// pack is 38x28 pixel art, an exact 5x (tools/art/clawd_gen.py). g_sx256 is
+// pack is 190x140, i.e. 1:1 (tools/art/clawd_gen.py). g_sx256 is
 // that scale x256.
 static const int BOX_W = 190, BOX_H = 140; // fill target inside the region
 static int g_sx256 = 256, g_offX = 0, g_offY = 0; // scale ×256 (nearest-neighbour)
