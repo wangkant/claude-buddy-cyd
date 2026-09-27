@@ -236,6 +236,15 @@ class TestHookToBridge(_TmpDir):
         self.link.worker, self.link.loop, self.link.connected = \
             _Worker(), loop, True
 
+    def test_tools_map_to_activity_clips(self):
+        self._cfg()
+        for tool, act in (("mcp__github__search_issues", "tooling"),
+                          ("WebSearch", "searching"), ("TodoWrite", "planning"),
+                          ("Edit", "typing"), ("SomethingNew", None)):
+            self._run({"hook_event_name": "PreToolUse", "tool_name": tool})
+            d = json.loads(self.link.slot.take())["d"]
+            self.assertEqual(d.get("act"), act, tool)
+
     def test_event_reaches_bridge_with_token_and_budget(self):
         self._cfg(budget=123)
         self.append("s1", _line("a", 42, tools=1))

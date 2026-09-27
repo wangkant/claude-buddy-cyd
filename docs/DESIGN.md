@@ -260,6 +260,17 @@ renderer and the transports never race and no locking is needed.
 - GIF packs: a `manifest.json` maps `states` to a file or an array of files
   (arrays are the carousel for a state). Full-frame / transparent-over-black
   clips render correctly without a framebuffer.
+- The shipped pack is drawn in code (`tools/art/clawd_gen.py`): 38×28 pixel
+  art in one shared 32-colour palette, stored at that size and drawn at an
+  exact 5× into the 190×140 box — crisp, ~125 KB for 29 clips (the previous
+  hand-made 120×126 pack was ~1.2 MB for 17). Every frame is written whole
+  (disposal 2, no transparency) because the renderer maps transparency to
+  black and its state-entry pop redraws frames at another scale. States:
+  sleep, 3 idle variants, a 9-clip busy carousel, a clip set per tool-aware
+  activity (typing, building, reading, searching, planning, tooling,
+  juggling, thinking, sweeping) and the reactions (attention, celebrate,
+  heart, dizzy, error). `tools/test_art_pack.py` keeps the manifest in step
+  with the states the firmware (`isWork`) and hook (`TOOL_ACT`) can produce.
 
 ## 9. Design history
 
@@ -281,6 +292,12 @@ renderer and the transports never race and no locking is needed.
   several PCs). WiFi came back without its old costs: no captive portal —
   credentials are pushed over USB by `buddy_bridge.py wifi` — no dependency
   on it for the other links, and the radio stays off unless configured.
+- **Hand-made pack → generated pack (2026-09).** The character art was
+  redrawn from scratch as code: one consistent style (rounded body, top
+  highlight, shade row, ground shadow), props attached to the hands, and the
+  clips that didn't fit dropped (an "ERROR" banner on the dizzy easter egg,
+  a heart state with no heart, clips for states the hook never sent). New
+  clips cover web search, planning, MCP tools and subagents.
 - **Approval → passive dashboard → opt-in approval.** An earlier iteration
   showed permission prompts with on-device Approve/Deny. That was removed in
   favour of a passive usage dashboard, then a leaner version returned as an

@@ -1,13 +1,13 @@
 # CYD Claude Buddy
 
 <p align="center">
-  <img src="assets/painting.gif" width="116" alt="painting">
-  <img src="assets/sweeping.gif" width="116" alt="sweeping">
-  <img src="assets/stirring.gif" width="116" alt="stirring">
-  <img src="assets/building.gif" width="116" alt="building">
-  <img src="assets/typing.gif" width="116" alt="typing">
+  <img src="assets/typing.gif" width="152" alt="typing">
+  <img src="assets/painting.gif" width="152" alt="painting">
+  <img src="assets/brewing.gif" width="152" alt="brewing">
+  <img src="assets/hammering.gif" width="152" alt="hammering">
+  <img src="assets/conjuring.gif" width="152" alt="conjuring">
 </p>
-<p align="center"><sub>Clawd hard at work — painting&nbsp;·&nbsp;sweeping&nbsp;·&nbsp;stirring&nbsp;·&nbsp;building&nbsp;·&nbsp;typing</sub></p>
+<p align="center"><sub>Clawd hard at work — typing&nbsp;·&nbsp;painting&nbsp;·&nbsp;brewing&nbsp;·&nbsp;hammering&nbsp;·&nbsp;conjuring</sub></p>
 
 A desk companion for Claude Code: the orange **Clawd** mascot on a **Cheap
 Yellow Display** (ESP32) that mirrors your live Claude Code activity and usage
@@ -121,14 +121,32 @@ TCP on port 8788 — fine for a home network, not for an untrusted one.
 
 | State | When | Look |
 |---|---|---|
-| `sleep` (ASLEEP) | no bridge attached (Claude not in use), or no activity yet | calm, dim |
-| `idle` (READY) | connected, no work running | resting |
-| `busy` (WORKING) | Claude is working | a rotating set of "working" clips + a whimsical verb ("Pondering…", "Brewing…") that changes in sync with the animation. Tool-aware: editing, running, reading, delegating… |
-| `attention` (NEEDS YOU) | the turn was handed back to you — a **Notification**, or **Stop** with nothing to do next | sticky alert; the LED nudge escalates the longer it waits |
-| `celebrate` (DONE!) | a turn just finished (**Stop**) | brief celebration |
-| `heart` (HELLO) | a new session started (**SessionStart**), or you pet Clawd (tap the character) | brief hello |
-| `error` (OOPS) | a tool reported an error | brief wince |
-| `dizzy` | triple-tap the screen | easter egg |
+| `sleep` (ASLEEP) | no bridge attached (Claude not in use), or no activity yet | flattened, eyes shut, drifting Z's |
+| `idle` (READY) | connected, no work running | breathing, blinking, looking around, the odd happy hop |
+| WORKING | Claude is working | a clip for what it's doing (below) + a matching verb in the card |
+| `attention` (NEEDS YOU) | the turn was handed back to you — a **Notification**, or **Stop** with nothing to do next | waves at you under a "!" bubble; sticky, and the LED nudge escalates the longer it waits |
+| `celebrate` (DONE!) | a turn just finished (**Stop**) | jumps for joy in confetti |
+| `heart` (HELLO) | a new session started (**SessionStart**), or you pet Clawd (tap the character) | blushes, hearts float up |
+| `error` (OOPS) | a tool reported an error | winces, sweat drop |
+| `dizzy` | triple-tap the screen | X eyes, stars circling its head |
+
+**While working, Clawd acts out the tool Claude is using:**
+
+| Claude is… | Tools | Clawd is… | Verb |
+|---|---|---|---|
+| editing | Edit, Write, MultiEdit, NotebookEdit | typing at a monitor, or writing on paper | Editing… |
+| running | Bash (+ output / kill) | watching a terminal fill, or hammering in a hard hat | Running… |
+| reading | Read, Grep, Glob, LS | reading a book, or sweeping a magnifier down a page | Reading… |
+| searching | WebSearch, WebFetch | studying a spinning globe | Searching… |
+| planning | TodoWrite, ExitPlanMode | ticking off a clipboard | Planning… |
+| using tools | any MCP server tool (`mcp__…`) | plugging a cable in | Using tools… |
+| delegating | Task (subagents) | sending little helpers off, or juggling | Delegating… |
+| thinking | a prompt was just sent | pondering under a thought cloud | Thinking… |
+| compacting | PreCompact (optional hook) | sweeping up | Compacting… |
+| anything else | — | a carousel: brewing, forging, conjuring, pondering, juggling, painting, churning gears, stacking blocks, vibing — with a whimsical verb ("Brewing…", "Conjuring…") in sync | Brewing… etc. |
+
+Each new tool event nudges Clawd to another clip of the same activity, so the
+animation keeps pace with Claude.
 
 `celebrate` / `heart` / `error` are short reactions that play for a few seconds
 (and wake the screen if it's off), then fall back to the normal state.
@@ -224,8 +242,14 @@ character system — is hardware-independent. To run it on another ESP32 + TFT:
   data partition to your board's flash (drop some `busy_*` clips from the pack
   and manifest if you're tight).
 
-The Clawd art is a plain GIF pack (`data/clawd/`, 120 px-wide, black background),
-so you can drop in your own character without touching code.
+The Clawd art is a plain GIF pack (`data/clawd/` + `manifest.json` mapping
+states to clips), drawn entirely in code by `tools/art/clawd_gen.py`: 38×28
+pixel art on black that the device draws at exactly 5× (crisp, and the whole
+pack is ~125 KB). Tweak the generator and re-run it
+(`python tools/art/clawd_gen.py --sheet sheet.png` also writes a contact sheet
+to review), or drop in your own character — any size; the renderer fits it to
+its 190×140 box. `tools/test_art_pack.py` checks that every state the firmware
+and hook use has clips.
 
 ## Build & flash
 
@@ -243,9 +267,11 @@ If a bridge is holding the USB port, `python tools/buddy_bridge.py stop` frees
 it first.
 
 > **Upgrading an older build:** the partition layout keeps **nvs and LittleFS
-> at their exact offsets**, so one plain USB `upload` migrates the board with
-> the token, touch + battery calibration, stats history and GIF pack intact
-> (no `uploadfs` needed). Updates are USB-only — there's no over-the-air flash.
+> at their exact offsets**, so an `upload` keeps the token, touch + battery
+> calibration and stats history. Run `uploadfs` too whenever `data/clawd/`
+> changed — e.g. the redrawn character pack (new clip names: the new firmware
+> won't find the old files). Updates are USB-only — there's no over-the-air
+> flash.
 
 The display driver is a build flag (`ILI9341_2_DRIVER` in `platformio.ini`); on a
 different panel that shows a white or garbled image, switch to your controller's
@@ -414,14 +440,15 @@ cold-boots straight back into the dashboard.
 ## Development
 
 ```bash
-cd tools && python -m unittest -v test_buddy_hook test_buddy_bridge
+cd tools && python -m unittest -v test_buddy_hook test_buddy_bridge test_art_pack
 ```
 
-The Python tests need no hardware: the hook's rollup runs on temp files, and
-the bridge's USB and WiFi transports run end to end against a fake device on a
-loopback socket (the USB path through pyserial's `socket://` URL). CI
-(`.github/workflows/ci.yml`) runs them and builds the firmware on every push;
-it never uploads. Firmware changes still want a check on a real board.
+The Python tests need no hardware: the hook's rollup runs on temp files, the
+bridge's USB and WiFi transports run end to end against a fake device on a
+loopback socket (the USB path through pyserial's `socket://` URL), and the art
+pack is checked against the states the firmware and hook use (needs Pillow).
+CI (`.github/workflows/ci.yml`) runs them and builds the firmware on every
+push; it never uploads. Firmware changes still want a check on a real board.
 
 ## Repository layout
 
@@ -434,7 +461,7 @@ src/            firmware: main.cpp (orchestrator), net/ (envelope hub + the
 data/clawd/     Clawd GIF character pack (flashed as the LittleFS image)
 assets/         README preview GIFs
 tools/          buddy_hook.py + buddy_bridge.py (PC side), their tests, and
-                HOOKS.md (hook setup)
+                HOOKS.md (hook setup); art/clawd_gen.py draws the GIF pack
 docs/           design notes
 .github/        CI: Python tests + firmware build
 platformio.ini  build configuration (partitions.csv: flash layout)
@@ -445,10 +472,11 @@ platformio.ini  build configuration (partitions.csv: flash layout)
 - **Code & tooling** (firmware + `tools/`): **MIT** — see
   [LICENSE](LICENSE). © 2026 Qiankang (Kant) Wang.
 - **Clawd character art** (`data/clawd/` and `assets/`): **not MIT.** "Clawd" is
-  the property of **Anthropic, PBC**; all rights reserved. The pixel sprites are
-  adapted from [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk)
-  (source code AGPL-3.0; artwork all-rights-reserved). Swap in your own
-  black-background GIF pack to redistribute the project freely.
+  the property of **Anthropic, PBC**; all rights reserved. The sprites are this
+  project's own drawing of the character, generated by `tools/art/clawd_gen.py`
+  (earlier releases used sprites adapted from
+  [rullerzhou-afk/clawd-on-desk](https://github.com/rullerzhou-afk/clawd-on-desk)).
+  Swap in your own GIF pack to redistribute the project freely.
 - **Concept & event model:** inspired by Anthropic's maker reference
   [claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)
   (MIT), reproduced here over Claude Code hooks with a self-hosted bridge.

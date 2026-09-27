@@ -22,10 +22,13 @@ int intensityTier(int burst, int agents) {
   return 0;
 }
 
+// Every "working" state: the generic busy carousel plus the tool-aware
+// activities the hook sends as "act" (tools/buddy_hook.py TOOL_ACT) and the
+// PreCompact fx. Each has clips in the GIF pack's manifest.
 bool isWork(const char *st) {
-  static const char *W[] = {"busy",      "typing",  "building",  "thinking",
-                            "juggling",  "groove",  "carrying",  "debugger",
-                            "reading",   "sweeping"};
+  static const char *W[] = {"busy",     "typing",    "building", "thinking",
+                            "reading",  "searching", "planning", "tooling",
+                            "juggling", "sweeping"};
   for (auto w : W)
     if (!strcmp(st, w)) return true;
   return false;
@@ -39,9 +42,12 @@ bool isWork(const char *st) {
 uint32_t actTimeout(const char *st) {
   if (!strcmp(st, "juggling")) return 600000UL; // subagents (Task) run longest
   if (!strcmp(st, "building")) return 360000UL; // Bash: builds/installs/tests
-  if (!strcmp(st, "thinking")) return 180000UL; // deep reasoning / web fetch
-  if (!strcmp(st, "typing") || !strcmp(st, "reading"))
-    return 90000UL; // edits/reads are quick; recover promptly
+  if (!strcmp(st, "thinking")) return 180000UL; // deep reasoning
+  if (!strcmp(st, "searching") || !strcmp(st, "tooling"))
+    return 180000UL; // web fetches / MCP servers can be slow
+  if (!strcmp(st, "typing") || !strcmp(st, "reading") ||
+      !strcmp(st, "planning"))
+    return 90000UL; // edits/reads/todo updates are quick; recover promptly
   return 180000UL;  // generic busy / carousel / unknown
 }
 
@@ -50,10 +56,10 @@ const char *actVerb(const char *st) {
   if (!strcmp(st, "building")) return "Running...";
   if (!strcmp(st, "thinking")) return "Thinking...";
   if (!strcmp(st, "reading")) return "Reading...";
+  if (!strcmp(st, "searching")) return "Searching...";
+  if (!strcmp(st, "planning")) return "Planning...";
+  if (!strcmp(st, "tooling")) return "Using tools...";
   if (!strcmp(st, "juggling")) return "Delegating...";
-  if (!strcmp(st, "groove")) return "Vibing...";
-  if (!strcmp(st, "carrying")) return "Moving...";
-  if (!strcmp(st, "debugger")) return "Inspecting...";
   if (!strcmp(st, "sweeping")) return "Compacting..."; // PreCompact fx
   return "Working...";
 }

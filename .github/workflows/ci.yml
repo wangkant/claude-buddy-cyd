@@ -25,12 +25,13 @@ jobs:
           python-version: "3.11"
 
       # Hook + bridge unit tests (no hardware: the USB/WiFi transports run
-      # against a fake device on a loopback socket; pyserial for the USB one).
+      # against a fake device on a loopback socket; pyserial for the USB one)
+      # and the GIF pack's consistency checks (Pillow).
       - name: Python tests
         working-directory: tools
         run: |
-          pip install pyserial
-          python -m unittest -v test_buddy_hook test_buddy_bridge
+          pip install pyserial pillow
+          python -m unittest -v test_buddy_hook test_buddy_bridge test_art_pack
 
       - name: Install PlatformIO
         run: pip install --upgrade platformio

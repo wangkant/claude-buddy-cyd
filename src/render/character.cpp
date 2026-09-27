@@ -56,8 +56,9 @@ static int g_hist[2] = {-1, -1}; // recent clip indices, so a clip can't recur
 static bool g_open = false;
 
 // per-open draw geometry (set after the canvas size is known). The art is
-// scaled to fill BOX_W x BOX_H keeping its aspect -- up OR down (the shipped
-// 120-px pack renders at ~1.11x); g_sx256 is that scale x256.
+// scaled to fill BOX_W x BOX_H keeping its aspect -- up OR down; the shipped
+// pack is 38x28 pixel art, an exact 5x (tools/art/clawd_gen.py). g_sx256 is
+// that scale x256.
 static const int BOX_W = 190, BOX_H = 140; // fill target inside the region
 static int g_sx256 = 256, g_offX = 0, g_offY = 0; // scale ×256 (nearest-neighbour)
 static int g_sxBase = 256; // the settled scale for the open clip (pop-in target)

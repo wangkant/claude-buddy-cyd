@@ -458,13 +458,17 @@ def main():
         "Edit": "typing", "Write": "typing", "MultiEdit": "typing",
         "NotebookEdit": "typing", "Bash": "building", "BashOutput": "building",
         "KillShell": "building", "Read": "reading", "Grep": "reading",
-        "Glob": "reading", "WebFetch": "thinking", "WebSearch": "thinking",
-        "Task": "juggling",
+        "Glob": "reading", "LS": "reading", "WebFetch": "searching",
+        "WebSearch": "searching", "TodoWrite": "planning",
+        "ExitPlanMode": "planning", "Task": "juggling", "Agent": "juggling",
     }
     act = fx = ""
     if evt in ("PreToolUse", "PostToolUse"):
         running, total = 1, 1
-        act = TOOL_ACT.get(data.get("tool_name", ""), "")
+        tool = str(data.get("tool_name", ""))
+        # MCP server tools (mcp__<server>__<tool>) get the plug-in clip
+        act = TOOL_ACT.get(tool) or ("tooling" if tool.startswith("mcp__")
+                                     else "")
         msg = act or "working"
         if evt == "PostToolUse":
             tr = data.get("tool_response")

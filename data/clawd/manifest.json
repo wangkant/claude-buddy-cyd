@@ -9,35 +9,48 @@
   },
   "states": {
     "sleep": "sleep.gif",
-    "idle": "idle.gif",
-    "busy": [
-      "busy_0.gif",
-      "busy_1.gif",
-      "busy_2.gif",
-      "busy_5.gif",
-      "busy_6.gif",
-      "busy_7.gif",
-      "busy_8.gif",
-      "busy_9.gif",
-      "busy_10.gif",
-      "busy_11.gif",
-      "busy_12.gif",
-      "busy_13.gif"
+    "idle": [
+      "idle_blink.gif",
+      "idle_look.gif",
+      "idle_hop.gif"
     ],
+    "busy": [
+      "brewing.gif",
+      "forging.gif",
+      "conjuring.gif",
+      "pondering.gif",
+      "juggling.gif",
+      "painting.gif",
+      "churning.gif",
+      "stacking.gif",
+      "vibing.gif"
+    ],
+    "thinking": "pondering.gif",
+    "typing": [
+      "typing.gif",
+      "writing.gif"
+    ],
+    "building": [
+      "terminal.gif",
+      "hammering.gif"
+    ],
+    "reading": [
+      "reading.gif",
+      "scanning.gif"
+    ],
+    "searching": "searching.gif",
+    "planning": "planning.gif",
+    "tooling": "tooling.gif",
+    "juggling": [
+      "delegating.gif",
+      "juggling.gif"
+    ],
+    "sweeping": "sweeping.gif",
     "attention": "attention.gif",
+    "notification": "attention.gif",
     "celebrate": "celebrate.gif",
-    "dizzy": "dizzy.gif",
     "heart": "heart.gif",
-    "thinking": "busy_0.gif",
-    "typing": ["busy_1.gif", "busy_7.gif", "busy_5.gif"],
-    "building": ["busy_2.gif", "busy_11.gif"],
-    "sweeping": "busy_6.gif",
-    "juggling": ["busy_8.gif", "busy_13.gif", "busy_10.gif"],
-    "groove": ["busy_9.gif", "busy_13.gif"],
-    "carrying": "busy_10.gif",
-    "debugger": "busy_11.gif",
-    "reading": ["busy_12.gif", "busy_0.gif"],
-    "error": "dizzy.gif",
-    "notification": "attention.gif"
+    "dizzy": "dizzy.gif",
+    "error": "error.gif"
   }
 }
