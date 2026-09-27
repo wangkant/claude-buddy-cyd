@@ -180,8 +180,9 @@ bool Character::openCurrentOrFallback() {
   Serial.printf("[character] open failed for '%s', falling back\n",
                 g_cur.c_str());
   static const char *fb[] = {"idle", "sleep"};
+  String failed = g_cur; // g_cur moves as we try; never retry the one that failed
   for (const char *f : fb) {
-    if (g_cur == f)
+    if (failed == f)
       continue;
     g_cur = f;
     g_idx = 0;
@@ -305,7 +306,11 @@ void Character::update() {
   if (g_speed != 100 && g_speed >= 50)
     fd = fd * 100 / g_speed; // scale the inter-frame delay (faster when intense)
   g_nextFrame = millis() + fd; // native frame pace -> smooth playback
-  if (rc == 0) { // current GIF finished one pass
+  // rc 0: the clip finished one pass. rc -1: a decode error -- a short
+  // LittleFS read, or trailing junk after the last frame (AnimatedGIF reports
+  // that as -1 too). Both restart from a fresh open instead of freezing on the
+  // last frame until the next state change.
+  if (rc <= 0) {
     auto it = g_states.find(g_cur);
     bool multi = (it != g_states.end() && it->second.size() > 1);
     uint32_t now = millis();
@@ -332,7 +337,9 @@ void Character::update() {
     gif.close();
     g_open = false;
     openCurrentOrFallback();
-    g_nextFrame = millis();
+    // a clean loop starts its next pass at once; after an error keep the frame
+    // pace so a persistently bad file can't become an open() storm
+    g_nextFrame = rc == 0 ? millis() : millis() + fd;
   }
 }
 

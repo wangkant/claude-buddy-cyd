@@ -75,7 +75,10 @@ void fmtTok(long long t, char *out, size_t n) {
     snprintf(out, n, "%lld.%lldM", x / 10, x % 10);
   } else if (t >= 1000) {
     long long x = (t + 50) / 100; // tenths of a thousand, rounded
-    snprintf(out, n, "%lld.%lldk", x / 10, x % 10);
+    if (x >= 10000) // 999,950..999,999 rounds up to a million, not "1000.0k"
+      snprintf(out, n, "1.0M");
+    else
+      snprintf(out, n, "%lld.%lldk", x / 10, x % 10);
   } else {
     snprintf(out, n, "%lld", t);
   }

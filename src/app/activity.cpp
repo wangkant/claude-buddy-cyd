@@ -25,14 +25,14 @@ int intensityTier(int burst, int agents) {
 bool isWork(const char *st) {
   static const char *W[] = {"busy",      "typing",  "building",  "thinking",
                             "juggling",  "groove",  "carrying",  "debugger",
-                            "reading"};
+                            "reading",   "sweeping"};
   for (auto w : W)
     if (!strcmp(st, w)) return true;
   return false;
 }
 
 // Tuned per clip: tools that legitimately run long (Bash builds/tests,
-// subagents, web fetches, compaction) get a roomy window; quick edits/reads
+// subagents, web fetches) get a roomy window; quick edits/reads
 // recover fast. A genuinely long tool that crosses its window just shows idle
 // until its PostToolUse lands — a minor cosmetic cost in exchange for never
 // being permanently stuck on a WORKING screen.
@@ -40,7 +40,6 @@ uint32_t actTimeout(const char *st) {
   if (!strcmp(st, "juggling")) return 600000UL; // subagents (Task) run longest
   if (!strcmp(st, "building")) return 360000UL; // Bash: builds/installs/tests
   if (!strcmp(st, "thinking")) return 180000UL; // deep reasoning / web fetch
-  if (!strcmp(st, "sweeping")) return 180000UL; // context compaction
   if (!strcmp(st, "typing") || !strcmp(st, "reading"))
     return 90000UL; // edits/reads are quick; recover promptly
   return 180000UL;  // generic busy / carousel / unknown
@@ -55,6 +54,7 @@ const char *actVerb(const char *st) {
   if (!strcmp(st, "groove")) return "Vibing...";
   if (!strcmp(st, "carrying")) return "Moving...";
   if (!strcmp(st, "debugger")) return "Inspecting...";
+  if (!strcmp(st, "sweeping")) return "Compacting..."; // PreCompact fx
   return "Working...";
 }
 
