@@ -11,25 +11,23 @@
 
 A desk companion for Claude Code: the orange **Clawd** mascot on a **Cheap
 Yellow Display** (ESP32) that mirrors your live Claude Code activity and usage
-stats — driven entirely by Claude Code **hooks** over **Bluetooth LE**, with
-**no WiFi, no network setup, and no always-on PC process** (a tiny bridge is
-spawned on demand and exits by itself when Claude goes quiet).
+stats. It's driven entirely by Claude Code **hooks** and reaches the device
+over whichever link you have — the **USB cable**, **Bluetooth LE**, or your
+**WiFi** — with no always-on PC process (a tiny bridge is spawned on demand and
+exits by itself when Claude goes quiet).
 
 Clawd reacts to what Claude is doing (sleeping / ready / working, plus little
 reactions when Claude needs you, finishes, or a session starts) while a stats
 card tracks your usage: tokens today and all-time, tool calls, sessions, turns,
-and the current session's duration. A tiny Python helper, invoked by Claude Code
-hooks, reads each session's transcript and pushes a snapshot to the device.
+and the current session's duration.
 
 Built for the **CYD** — the cheapest all-in-one ESP32 + screen + touch board.
-The app sits on a thin HAL over `TFT_eSPI`, so it can also be adapted to other
-ESP32 + TFT panels if you want — see [Adapting to other
-boards](#adapting-to-other-boards).
+The app sits on a thin HAL over `TFT_eSPI`, so it can be adapted to other
+ESP32 + TFT panels — see [Adapting to other boards](#adapting-to-other-boards).
 
 > The official "Hardware Buddy" Bluetooth feature isn't exposed in the Claude
-> desktop app build used here, so this project reproduces the experience over a
-> self-hosted transport: a BLE GATT service on the device, an on-demand bridge
-> script, and Claude Code hooks on the PC.
+> desktop app build used here, so this project reproduces the experience with
+> a self-hosted transport: a small bridge on the PC and Claude Code hooks.
 >
 > _Unofficial, personal fan project — **not affiliated with or endorsed by
 > Anthropic.** "Clawd" is Anthropic's character; see [License &
@@ -39,55 +37,83 @@ boards](#adapting-to-other-boards).
 
 ## Contents
 
-- [How it works](#how-it-works)
+- [How it works](#how-it-works) · [Connections: USB, BLE, WiFi](#connections-usb-ble-wifi)
 - [What it shows](#what-it-shows)
 - [Hardware](#hardware) · [Adapting to other boards](#adapting-to-other-boards)
 - [Build &amp; flash](#build--flash)
 - [First-time setup](#first-time-setup)
-- [Use it from any computer (no repo required)](#use-it-from-any-computer-no-repo-required)
+- [Use it from another computer](#use-it-from-another-computer)
 - [On-device controls](#on-device-controls)
 - [How usage is counted](#how-usage-is-counted)
 - [Power use](#power-use)
 - [Troubleshooting](#troubleshooting)
-- [Repository layout](#repository-layout) · [License &amp; credits](#license--credits)
+- [Development](#development) · [Repository layout](#repository-layout) · [License &amp; credits](#license--credits)
 
 ## How it works
 
 ```
 Claude Code (PC) ──hook──▶ buddy_hook.py ──HTTP (localhost)──▶ buddy_bridge.py
-  SessionStart / UserPromptSubmit / PreToolUse /                    │ BLE GATT
-  PostToolUse / Stop / SessionEnd / Notification                    ▼
-                                                            device (Clawd + dashboard)
+  SessionStart / UserPromptSubmit / PreToolUse /                    │ USB serial
+  PostToolUse / Stop / SessionEnd / Notification                    │ or BLE GATT
+                                                                     │ or WiFi (TCP)
+                                                                     ▼
+                                                        device (Clawd + dashboard)
 ```
 
-Three pieces; the only radio hop is Bluetooth LE, so there is no network to
-configure — the buddy works anywhere your PC is:
-
-- **Device (firmware).** Boots and advertises as `claude-cyd` (NimBLE GATT
-  server, peripheral-only). The bridge writes JSON envelopes
-  `{"k":"event"|"ask","tok":…,"d":{…}}` to a write characteristic; a second
-  characteristic notifies Allow/Deny taps back. It renders the Clawd GIF pack
-  from on-board flash (LittleFS) with `AnimatedGIF`. By default it's purely a
-  display. (An **optional** opt-in adds on-device *tap-to-approve* for a pending
-  tool call — off unless you register the `PermissionRequest` hook; see
-  [tools/HOOKS.md](tools/HOOKS.md).)
-- **Bridge (`tools/buddy_bridge.py`).** A small Python process that serves the
-  hook's HTTP calls on `127.0.0.1:8787` and relays them over BLE. It is **not**
-  a daemon: the hook spawns it on demand (connection refused → spawn), it holds
-  one BLE connection while events flow, goes radio-quiet if the device is away,
-  and **exits by itself after 10 minutes without events**. No autostart entry,
+- **Hook (`tools/buddy_hook.py`).** A self-contained Python script Claude Code
+  runs on each hook event (~0.1 s, stdlib only). It works out what Claude is
+  doing, reads the session transcript for the usage rollup, and `POST`s a
+  snapshot to the local bridge. Status events are **async and fail open**: if
+  the bridge or device is unreachable the error is swallowed, so they never
+  slow down or break a session.
+- **Bridge (`tools/buddy_bridge.py`).** A small Python process on
+  `127.0.0.1:8787` that relays the hook's calls to the device over the first
+  link that works (see [Connections](#connections-usb-ble-wifi)). It is **not**
+  a daemon: the hook spawns it on demand (connection refused → spawn), and it
+  **exits by itself after 10 minutes without events** — no autostart entry,
   no standing drain.
-- **PC (`tools/buddy_hook.py`).** A single self-contained Python script that
-  Claude Code runs on each hook event. It figures out what Claude is doing, reads
-  the session transcript for the usage rollup, and `POST`s it to the bridge.
-  Stats events are **non-blocking and fail open**: if the bridge or device is
-  unreachable the error is swallowed, so they can never slow down or break a
-  Claude session. (The optional approval hook briefly waits for your tap and also
-  fails open — on a timeout or a disconnected device it falls back to Claude's
-  normal prompt.)
+- **Device (firmware).** Every link carries the same messages: JSON envelopes
+  `{"k":"event"|"ask"|…,"tok":…,"d":{…}}` in, `{"t":"decision"|"info",…}` out.
+  One hub on the device checks the token and applies them, whichever link they
+  came from. It renders the Clawd GIF pack from on-board flash (LittleFS).
+  By default it's purely a display; an **optional** opt-in adds on-device
+  *tap-to-approve* for a pending tool call (see [tools/HOOKS.md](tools/HOOKS.md)).
 
-The device is the source of truth for its own auth token; the PC just needs the
-token (see [setup](#first-time-setup)) — there is no IP, no pairing, no bonding.
+The device is the source of truth for its own auth token; the PC just needs a
+copy of it (see [setup](#first-time-setup)) — no pairing, no bonding.
+
+## Connections: USB, BLE, WiFi
+
+| Link | Use it when | PC needs | Notes |
+|---|---|---|---|
+| **USB** | the buddy is plugged into this PC anyway (it's also its power) | `pip install pyserial` | the flashing/log port; zero radio, zero setup |
+| **BLE** | the buddy sits on the desk on its own power | `pip install bleak`, a Bluetooth adapter | ~10 m range; the default "wireless" choice |
+| **WiFi** | out of Bluetooth range, or several PCs share one buddy | nothing extra | **opt-in**: set up once over USB; costs ~50 mA more on battery |
+
+The bridge tries them in order **USB → BLE → WiFi** and uses the first that
+answers (it re-picks whenever the link drops). To pin or reorder, set
+`"transport"` in `~/.claude/buddy.json`: `"usb"`, `"ble"`, `"wifi"`, or a list
+such as `["usb", "wifi"]`. Check what it's using with:
+
+```bash
+python tools/buddy_bridge.py status
+```
+
+**Setting up WiFi** — plug the buddy in by USB and run (the password never
+travels over Bluetooth, which is unencrypted; the device only accepts WiFi
+credentials over the cable):
+
+```bash
+python tools/buddy_bridge.py wifi "<ssid>" "<password>"
+```
+
+It prints the address it got (the device's **Settings** screen shows it too),
+and the bridge remembers it. From then on the bridge falls back to WiFi when
+neither the cable nor BLE reaches — it finds the buddy at its last address or
+as `claude-cyd.local` (mDNS). Pin an address with `"device": "<ip>"` in
+`buddy.json`. `python tools/buddy_bridge.py wifi --off` turns WiFi off and
+forgets the network. On the LAN, envelopes (with the token) travel in plain
+TCP on port 8788 — fine for a home network, not for an untrusted one.
 
 ## What it shows
 
@@ -95,7 +121,7 @@ token (see [setup](#first-time-setup)) — there is no IP, no pairing, no bondin
 
 | State | When | Look |
 |---|---|---|
-| `sleep` (ASLEEP) | offline, or no activity yet | calm, dim |
+| `sleep` (ASLEEP) | no bridge attached (Claude not in use), or no activity yet | calm, dim |
 | `idle` (READY) | connected, no work running | resting |
 | `busy` (WORKING) | Claude is working | a rotating set of "working" clips + a whimsical verb ("Pondering…", "Brewing…") that changes in sync with the animation. Tool-aware: editing, running, reading, delegating… |
 | `attention` (NEEDS YOU) | the turn was handed back to you — a **Notification**, or **Stop** with nothing to do next | sticky alert; the LED nudge escalates the longer it waits |
@@ -115,24 +141,24 @@ Dismissing is local — it doesn't reply to Claude.
 **Stats card** (bottom): two headline figures — **Today** and **Total** tokens —
 over four compact counts: **Tools** (tool calls), **Turns** (assistant turns),
 **Sess** (sessions today), **Time** (current session duration). The numbers
-roll like an odometer when they change. The card has two pages sitting side by
-side — **swipe left** and the **Trends card** slides in from the right: a bar
-per day for the last 14 days (today in coral, still growing live) with a 7-day
-total and daily average — the device keeps a 30-day history in flash, dated by
-the PC so it needs no clock of its own. **Swipe right** to slide back; swiping
-past the end just rubber-bands. A fuller, live-updating panel is under
-long-press → **Settings → Stats** (adds project name, battery estimate, uptime,
-free heap, BLE link state).
+roll like an odometer when they change. **Swipe left** and the **Trends card**
+slides in: a bar per day for the last 14 days (today in coral, still growing
+live) with a 7-day total and daily average — the device keeps a 30-day history
+in flash, dated by the PC so it needs no clock of its own. **Swipe right** to
+slide back; swiping past the end rubber-bands. A fuller, live-updating panel is
+under long-press → **Settings → Stats** (adds a rough cost estimate, project
+name, battery estimate, uptime, free heap, and which link is live).
 
 **Ambient cues.** The onboard RGB LED speaks a colour language — a slow blue
 breath while working (cooler/quicker as the session heats up), a gentle amber
 breath when it needs you (escalating to hard blinks the longer it waits), red
 on error, green when a turn lands, and a little magenta heartbeat while you pet
 Clawd — silenced by the **Quiet** (Do Not Disturb) setting, and off whenever
-the screen is asleep. Session intensity shows as 1–2 pips in the top bar, next
-to a small **battery glyph** (the estimated charge on battery builds).
-Set an optional daily token `"budget"` in `buddy.json` and the stats-card
-divider becomes a usage gauge (coral → amber near the cap → red over).
+the screen is asleep. The top bar shows session intensity as 1–2 pips, a link
+dot (green while a bridge is attached), and a small **battery glyph** — an
+estimate for the battery setup below; ignore it on wall power. Set an optional
+daily token `"budget"` in `buddy.json` and the stats-card divider becomes a
+usage gauge (coral → amber near the cap → red over).
 
 ## Hardware
 
@@ -152,10 +178,10 @@ it's the default — but nothing about the app is CYD-specific.
 The board wants **5 V**, over its micro-USB port or the `P1` header's VIN/GND
 pins. Two ways to feed it:
 
-- **Wired (simplest).** Any USB power source — a phone charger, a PC port, a
-  power strip with USB. Nothing to configure. The top-bar battery glyph and the
-  Settings **Battery** row assume the battery setup below; on wall power just
-  ignore them.
+- **Wired (simplest).** Any USB power source. Plugged into the PC running
+  Claude Code, the same cable is also the **USB link**. The battery glyph and
+  the Stats panel's **Battery (est)** row assume the battery setup below; on
+  wall power just ignore them.
 - **Battery.** Reference setup: a **2000 mAh Li-ion cell + a cheap
   charge/discharge boost module** (the "charge + 5 V boost in one board" kind).
   The cell plugs into the module; the module's 5 V output feeds the CYD (its
@@ -180,10 +206,11 @@ pins. Two ways to feed it:
     the reading runs low until the next full die-charge-boot cycle — it's an
     estimate, treat it as one.
 
-CYD is the target, but the firmware is a thin HAL (`src/hal/`: display, touch,
-led, storage) over `TFT_eSPI`, and everything above it — networking, hooks,
-stats, the GIF character system — is hardware-independent. To run it on another
-ESP32 + TFT:
+### Adapting to other boards
+
+The firmware is a thin HAL (`src/hal/`: display, touch, led, storage) over
+`TFT_eSPI`, and everything above it — the links, hooks, stats, the GIF
+character system — is hardware-independent. To run it on another ESP32 + TFT:
 
 - **Display:** set the matching `*_DRIVER` flag and pins in `platformio.ini`
   (`TFT_eSPI` supports ILI9341 / ST7789 / ST7735 / ILI9488 / …). The character
@@ -191,6 +218,8 @@ ESP32 + TFT:
 - **Touch (optional):** adjust the XPT2046 pins in `src/hal/touch.cpp`, or stub
   `hal::Touch` — touch only drives the Settings menu and the easter egg.
 - **LED (optional):** `src/hal/led.cpp`; safe to no-op if your board has none.
+- **USB link:** any USB-serial chip works; the bridge probes CH340, CP210x,
+  FTDI and native Espressif USB ports (or name one with `"serial": "COM7"`).
 - **Flash / partition:** the Clawd pack needs ~1.2 MB of LittleFS — size the
   data partition to your board's flash (drop some `busy_*` clips from the pack
   and manifest if you're tight).
@@ -210,13 +239,13 @@ pio run -e cyd -t uploadfs    # 2) GIF pack  -> LittleFS (data/clawd/)
 
 Run both the first time (firmware *and* the filesystem image). After that,
 re-flash only what changed — `upload` for code, `uploadfs` for new/edited GIFs.
+If a bridge is holding the USB port, `python tools/buddy_bridge.py stop` frees
+it first.
 
-> **Upgrading from the WiFi/OTA build (mid-2026):** the partition layout went
-> back to a single factory app slot, but **nvs and LittleFS keep their exact
-> offsets** — so one plain USB `upload` migrates the board with the token,
-> touch + battery calibration, stats history and GIF pack all intact (no
-> `uploadfs` needed). There is no wireless reflash anymore — updates are
-> USB-only, which is the deliberate trade for dropping WiFi.
+> **Upgrading an older build:** the partition layout keeps **nvs and LittleFS
+> at their exact offsets**, so one plain USB `upload` migrates the board with
+> the token, touch + battery calibration, stats history and GIF pack intact
+> (no `uploadfs` needed). Updates are USB-only — there's no over-the-air flash.
 
 The display driver is a build flag (`ILI9341_2_DRIVER` in `platformio.ini`); on a
 different panel that shows a white or garbled image, switch to your controller's
@@ -230,46 +259,44 @@ driver/colour-order flags (e.g. `ST7789_DRIVER` + `TFT_RGB_ORDER=TFT_BGR`).
 ## First-time setup
 
 1. **Flash** firmware + filesystem (above). The device boots straight to the
-   dashboard and starts advertising over BLE — there is nothing to provision.
-2. **Read its token:** long-press → **Settings** — it's the line under the
-   buttons (also printed on the USB serial console at boot as
-   `[ble] token=…`). The token is a random secret generated on the device.
-3. **Install the one PC dependency:** `python -m pip install bleak`
-   (the BLE library the bridge uses; everything else is stdlib).
+   dashboard, listening on USB and advertising over BLE — nothing to provision.
+2. **Read its token:** long-press → **Settings** — it's the bottom line. (It's
+   also printed on the serial console at boot as `[hub] token=…`, e.g. in
+   `pio device monitor`.) The token is a random secret generated on the device.
+3. **Install Python 3** (on `PATH`) plus the library for your link:
+   `python -m pip install pyserial` for USB, `python -m pip install bleak` for
+   BLE (both is fine; WiFi needs neither).
 4. **Tell your PC the secret** — `~/.claude/buddy.json`:
    ```json
    { "token": "<device token>" }
    ```
-   (Optional: `"port"` to move the bridge off `8787`, `"budget"` for the
-   on-device daily token gauge.)
+   Optional keys: `"transport"` (see [Connections](#connections-usb-ble-wifi)),
+   `"port"` (move the bridge off `8787`), `"budget"` (the on-device daily token
+   gauge), `"device"` (the buddy's WiFi address), `"serial"` (a fixed COM port).
 5. **Register the hooks** in `~/.claude/settings.json` so Claude Code drives the
    device. Full snippet + explanation: **[tools/HOOKS.md](tools/HOOKS.md)**.
 
 That's it — start a Claude Code session: the first hook event spawns the
-bridge, the bridge finds the buddy, and Clawd wakes up. Your PC needs a
-Bluetooth adapter (any laptop has one).
+bridge, the bridge finds the buddy, and Clawd wakes up.
 
-## Use it from any computer (no repo required)
+## Use it from another computer
 
-**The flashed device is fully standalone.** Firmware and the animation pack live
-in its own flash; it needs no PC, no repo, and no cloud — it just boots and
-advertises. The machine with Bluetooth next to it runs the bridge; **other**
-computers can drive the buddy *through* that bridge.
+**The flashed device is fully standalone** — firmware and the animation pack
+live in its own flash; it needs no PC, no repo and no cloud. To drive it from
+another machine, repeat the setup there: copy `tools/buddy_hook.py` **and**
+`tools/buddy_bridge.py` side by side (e.g. into `~/.claude/` — the hook starts
+the bridge from its own folder), install the library for your link, create
+`buddy.json` with the token, register the hooks.
 
-On a second machine with its own Bluetooth (e.g. you carry the buddy to another
-desk), just repeat the normal setup there: copy `tools/buddy_hook.py` **and**
-`tools/buddy_bridge.py` (repo-independent home: `~/.claude/`), `pip install
-bleak`, create `buddy.json` with the token, register the hooks.
-
-To drive it from a machine **without** Bluetooth reach (a remote box you SSH
-into, a VM), run the bridge on the PC that sits near the buddy with
-`python buddy_bridge.py --listen 0.0.0.0`, and on the remote machine point
-`buddy.json` at that PC (`"host": "<pc-address>:8787"` — reachable over LAN or
-a mesh VPN such as Tailscale). The remote machine only needs `buddy_hook.py`;
-the bridge PC is the single ingress.
-
-Requirements: **Python 3 on `PATH`**. `buddy_tokens.json` is created
-automatically on first run.
+- **Same LAN, WiFi set up:** that machine's bridge reaches the buddy over WiFi
+  as `claude-cyd.local` — or add `"device": "<address>"` (shown on the
+  device's Settings screen) if mDNS doesn't resolve there. `"transport":
+  "wifi"` skips the USB/BLE attempts; no pyserial/bleak needed.
+- **No link of its own** (a remote box you SSH into, a VM): run the bridge on
+  the PC next to the buddy with `python buddy_bridge.py --listen 0.0.0.0`, and
+  point the remote machine's `buddy.json` at it with
+  `"host": "<pc-address>:8787"` (reachable over LAN or a mesh VPN such as
+  Tailscale). The remote machine only needs `buddy_hook.py`.
 
 Each machine keeps its **own** counts (`buddy_tokens.json` is per-machine, not
 merged); if two machines push at once, the device shows whichever pushed last.
@@ -287,15 +314,16 @@ merged); if two machines push at once, the device shows whichever pushed last.
 - **BOOT key** (the physical button next to RST) — short press wakes the screen
   or taps **Got it** for you; holding it toggles **Quiet** (one red blink = on,
   green = off). Handy when tapping the resistive panel is inconvenient.
-- **Long-press (~1 s)** — open **Settings**: **Power off** (top row, in red —
-  deep sleep: screen, LED and radio off; tap the screen or press the board's
+- **Long-press (~0.7 s)** — open **Settings**: **Power off** (top row, in red —
+  deep sleep: screen, LED and radios off; tap the screen or press the board's
   **RST** button to turn it back on), **Stats** (full live panel),
   **Quiet** (on/off Do Not Disturb — silences the RGB LED and stops the screen
   auto-waking for nudges; only your touch wakes it), **Brightness** (cycle the
   backlight 100 / 70 / 40 % / **auto** — auto night-dims to 25% when the onboard
   light sensor says the room went dark, and eases back up when the lights come
   on), **Recalibrate** (3-point touch calibration; times out safely
-  if you walk away), **Close**. Quiet and brightness persist across reboots.
+  if you walk away), **Close**. Below the buttons: the WiFi state/address and
+  the pairing token. Quiet and brightness persist across reboots.
 - Auto **screen-off after 30 s** of calm — or **3 min while Claude is working**,
   so long grinds go dark too; a touch, a fresh turn starting, or a nudge wakes
   it. After **an hour** with no touch and no Claude activity at all the device
@@ -317,7 +345,9 @@ merged); if two machines push at once, the device shows whichever pushed last.
   hooks stay fast even when a long session's transcript reaches tens of MB.
 - **Today** counts persist in `~/.claude/buddy_tokens.json` and reset at local
   midnight; the previous day rolls into the **all-time** total. A session that
-  spans midnight isn't double-counted.
+  runs past midnight — or sits idle for a few days and then resumes — counts
+  only its new work toward *today* and is never added to the all-time total
+  twice.
 
 ## Power use
 
@@ -325,20 +355,19 @@ Ordered by how much they save (all automatic):
 
 - **Auto screen-off.** The backlight is by far the largest draw. 30 s idle when
   calm; **3 min while Claude is working** (so a marathon turn goes dark instead
-  of burning the backlight for an hour — the LED events and any fresh turn
-  still relight it). While off, the CPU drops 240 → **80 MHz** and the idle
-  loop throttles to ~25 Hz; both jump back on wake.
+  of burning the backlight for an hour — LED events and any fresh turn still
+  relight it). While off, the CPU drops 240 → **80 MHz** and the idle loop
+  throttles to ~25 Hz; both jump back on wake.
 - **Auto deep sleep.** After **1 hour** with no touch *and* no hook events the
-  device powers itself fully off — on the battery setup that's ~10 mA
-  (including the boost module's idle draw) instead of idling dark.
-  Tap the screen to wake. Radio can't wake a deep-sleeping board, which is why
-  the leash is a full hour: any Claude activity inside it still lights the
-  screen the moment work starts. (While deep asleep it also stops advertising;
-  the bridge reconnects on the next scan after you wake it.)
-- **BLE instead of WiFi.** The whole reason this build exists: a connected BLE
-  peripheral idles far below the old WiFi stack (~90 mA base vs ~143 mA
-  measured, before the screen), and advertising while unconnected is cheaper
-  still.
+  device powers itself fully off — radios off and the display controller put
+  to sleep too; on the battery setup that's ~10 mA (including the boost
+  module's idle draw) instead of idling dark. Tap the screen to wake. No link
+  can wake a deep-sleeping board, which is why the leash is a full hour: any
+  Claude activity inside it still lights the screen the moment work starts.
+- **Pick the cheap link.** USB costs no radio at all; a connected BLE
+  peripheral idles far below WiFi (~90 mA base vs ~143 mA measured on the
+  WiFi build, before the screen). That's why WiFi stays **off** until you set
+  it up — and `wifi --off` turns it back off.
 
 For a manual off, **Settings → Power off** deep-sleeps the same way. On
 battery the device deliberately runs until the cell's protection cuts power —
@@ -353,17 +382,28 @@ cold-boots straight back into the dashboard.
 - **Buddy stays asleep / link dot dark** — is a Claude session actually
   running? The bridge only lives while hook events flow (it exits ~10 min after
   the last one) and the buddy naps whenever no bridge is attached. Run any
-  Claude turn and watch it wake. To inspect the bridge:
-  `curl --noproxy "*" http://127.0.0.1:8787/` (shows `"connected"`).
-- **Bridge never connects** — the Windows Bluetooth stack sometimes wedges
+  Claude turn and watch it wake, then `python tools/buddy_bridge.py status`
+  (or `curl --noproxy "*" http://127.0.0.1:8787/`) to see which link it uses.
+- **Never connects over USB** — install `pyserial`; close any serial monitor
+  holding the port; if the board isn't a CH340/CP210x/FTDI/Espressif one, name
+  its port with `"serial": "COM7"` (or `/dev/ttyUSB0`).
+- **Never connects over BLE** — the Windows Bluetooth stack sometimes wedges
   after sleep/resume: toggle Bluetooth off/on (or restart the "Bluetooth
   Support Service"), then run any Claude turn to respawn the bridge. Also check
   `python -m pip show bleak` and that the device is within ~10 m.
+- **Never connects over WiFi** — Settings on the device shows `WiFi:
+  connecting...` while it can't join (wrong password, out of range, 5 GHz-only
+  network — the ESP32 needs 2.4 GHz); re-run `wifi "<ssid>" "<password>"` over
+  USB. If `claude-cyd.local` doesn't resolve on your PC, set `"device"` to the
+  address shown on the device.
+- **Upload fails: port busy** — a bridge on the USB link holds the COM port:
+  `python tools/buddy_bridge.py stop`, then flash. (While Claude Code keeps
+  running, the next hook event starts a new bridge — pin `"transport": "ble"`
+  while you're flashing repeatedly.)
 - **Numbers never update while connected** — check `buddy.json` (the token
-  must match the one at the bottom of the device's Settings screen), that the
-  hooks are registered,
-  and that Python 3 is on `PATH`. Events with a wrong token are dropped
-  silently by design.
+  must match the bottom line of the device's Settings screen), that the hooks
+  are registered, and that Python 3 is on `PATH`. Envelopes with a wrong token
+  are dropped silently by design.
 - **Charging does nothing (battery setup)** — don't use a USB-C PD charger
   with a C-to-C cable on a cheap charge module (no CC resistors → no power);
   use a USB-A source. And charge the module's input, not the CYD's USB.
@@ -371,24 +411,38 @@ cold-boots straight back into the dashboard.
   is invisible to the gauge). It re-syncs itself on the next full
   die → charge → power-on cycle.
 
+## Development
+
+```bash
+cd tools && python -m unittest -v test_buddy_hook test_buddy_bridge
+```
+
+The Python tests need no hardware: the hook's rollup runs on temp files, and
+the bridge's USB and WiFi transports run end to end against a fake device on a
+loopback socket (the USB path through pyserial's `socket://` URL). CI
+(`.github/workflows/ci.yml`) runs them and builds the firmware on every push;
+it never uploads. Firmware changes still want a check on a real board.
+
 ## Repository layout
 
 ```
-src/            firmware: main.cpp (orchestrator), app/ (state tables, LED
+src/            firmware: main.cpp (orchestrator), net/ (envelope hub + the
+                USB, BLE and WiFi transports), app/ (state tables, LED
                 language, NVS store, power, battery gauge), ui/ (theme, text,
                 widgets), screens/ (home, trends, card slide, stats, settings,
-                ask), hal/ (display, touch, led, storage), net/ (BLE GATT),
-                render/ (Clawd GIF)
+                ask), hal/ (display, touch, led, storage), render/ (Clawd GIF)
 data/clawd/     Clawd GIF character pack (flashed as the LittleFS image)
 assets/         README preview GIFs
-tools/          buddy_hook.py + buddy_bridge.py + HOOKS.md (PC helpers + setup)
+tools/          buddy_hook.py + buddy_bridge.py (PC side), their tests, and
+                HOOKS.md (hook setup)
 docs/           design notes
-platformio.ini  build configuration
+.github/        CI: Python tests + firmware build
+platformio.ini  build configuration (partitions.csv: flash layout)
 ```
 
 ## License & credits
 
-- **Code & tooling** (firmware + `tools/buddy_hook.py`): **MIT** — see
+- **Code & tooling** (firmware + `tools/`): **MIT** — see
   [LICENSE](LICENSE). © 2026 Qiankang (Kant) Wang.
 - **Clawd character art** (`data/clawd/` and `assets/`): **not MIT.** "Clawd" is
   the property of **Anthropic, PBC**; all rights reserved. The pixel sprites are
@@ -397,7 +451,7 @@ platformio.ini  build configuration
   black-background GIF pack to redistribute the project freely.
 - **Concept & event model:** inspired by Anthropic's maker reference
   [claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy)
-  (MIT), reproduced here over BLE + Claude Code hooks with a self-hosted bridge.
+  (MIT), reproduced here over Claude Code hooks with a self-hosted bridge.
 - **CYD pinouts & community:** [witnessmenow/ESP32-Cheap-Yellow-Display](https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display) (MIT).
 
 > **Disclaimer.** This is an unofficial, personal fan project. It is **not
