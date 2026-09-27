@@ -71,11 +71,15 @@ glitch can't poison the estimate below the 40% discharge guard.
 
 ### Persistence
 
-- NVS key `batt_used` (mAh × 10, uint32). Saved by piggybacking the existing
-  `saveStatsIfChanged` cadence (no new wear pattern), plus force-saves in
-  `powerOff()` and at the low-battery shutdown.
+- NVS key `bused` (mAh × 10, int32), written by `battery::saveIfChanged()`
+  only once the count has moved ≥ 5 mAh since the last save (its own
+  throttle, so the wear pattern stays bounded), plus force-saves from
+  `noteDeepSleep()` (every power-off / auto sleep), the death-anchored cycle
+  transitions, and the once-a-minute checkpoint at ≤ 3 %.
+- `bcap` (learned usable capacity, mAh × 10) and `bdied` (the last cycle
+  ended in a brownout) carry the calibration across boots.
 - First boot / missing key = assume full (100 %).
-- OTA reflash keeps NVS, so the gauge survives updates.
+- A USB reflash keeps NVS, so the gauge survives updates.
 
 ## UI
 
@@ -100,19 +104,23 @@ glitch can't poison the estimate below the 40% discharge guard.
   keeps a clean upgrade path (swap `battery.cpp` internals for a MAX17048
   I2C driver later; UI and NVS contract unchanged).
 - **Brownout-ISR flash writes** — rejected: flash writes during brownout risk
-  NVS corruption, and the periodic save + low-battery shutdown already bound
-  data loss to a few minutes of stats.
+  NVS corruption, and the periodic save + the once-a-minute checkpoint at
+  ≤ 3 % already bound data loss to about a minute of stats.
 - **Charging-while-using compensation** — undetectable; documented behavior
   is "gauge keeps counting down while plugged in; it re-syncs on the next
   die → charge → power-on cycle."
 
 ## Testing
 
-1. Build both envs; flash over OTA (`cyd-ota`).
+1. Build and flash over USB (`pio run -e cyd -t upload`; there is no OTA
+   env since the BLE migration).
 2. Debug walkthrough: temporary `USABLE_MAH` of ~20 mAh compresses a full
-   discharge into minutes — verify bucket colors, Stats line, low-battery
-   shutdown, and that "Charged" resets to 100 %.
-3. Persistence: reboot mid-discharge, confirm `batt_used` restores; power off
+   discharge into minutes — verify bucket colors, the Stats line, and the
+   once-a-minute force-save once the estimate reads ≤ 3 %.
+3. Death-anchored cycle: run until the cell's protection cuts power, then
+   charge and power on — the brownout boot should log a learned `bcap` and
+   set `bdied`; the next clean boot clears `bdied` and refills to 100 %.
+4. Persistence: reboot mid-discharge, confirm `bused` restores; power off
    (deep sleep) for a known interval, confirm the sleep-rate charge applies.
-4. Restore real constants, reflash, sanity-check the ~7 h full-bright figure
+5. Restore real constants, reflash, sanity-check the ~7 h full-bright figure
    against a real afternoon of use.
