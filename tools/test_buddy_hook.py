@@ -1,14 +1,20 @@
-"""Unit tests for the hook's usage rollup (transcript scan + day state).
+"""Unit tests for the hook: usage rollup (transcript scan + day state) and
+its HTTP client against the real bridge Handler on a loopback port.
 Everything runs against temp files -- ~/.claude is never touched.
 Run: cd tools && python -m unittest test_buddy_hook -v"""
+import asyncio
+import io
 import json
 import os
 import shutil
+import socket
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
 
+import buddy_bridge as bb
 import buddy_hook as bh
 
 
@@ -150,6 +156,99 @@ class TestTodayStats(_TmpDir):
         self.stats("s1")
         self.assertEqual([n for n in os.listdir(self.dir) if n.endswith(".tmp")],
                          [])
+
+
+class _Worker:
+    async def send_ask(self, envelope):
+        pass
+
+
+class TestHookToBridge(_TmpDir):
+    """main() / _ask_decision() through the socket client into the real
+    bridge Handler (BLE side faked)."""
+
+    def setUp(self):
+        super().setUp()
+        self.link = bb.Link()
+        bb.Handler.link = self.link
+        self.httpd = bb.ThreadingHTTPServer(("127.0.0.1", 0), bb.Handler)
+        self.host = "127.0.0.1:%d" % self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+        for name, val in (("CFG", self.path("buddy.json")),
+                          ("TOK_STATE", self.path("tokens.json")),
+                          ("RT_STATE", self.path("rt.json"))):
+            p = mock.patch.object(bh, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _cfg(self, **kw):
+        c = {"token": "sekrit", "host": self.host}
+        c.update(kw)
+        with open(bh.CFG, "w", encoding="utf-8") as f:
+            json.dump(c, f)
+
+    def _run(self, evt):
+        with mock.patch.object(bh.sys, "stdin", io.StringIO(json.dumps(evt))):
+            return bh.main()
+
+    def _connect(self):
+        loop = asyncio.new_event_loop()
+        threading.Thread(target=loop.run_forever, daemon=True).start()
+        self.addCleanup(loop.call_soon_threadsafe, loop.stop)
+        self.link.worker, self.link.loop, self.link.connected = \
+            _Worker(), loop, True
+
+    def test_event_reaches_bridge_with_token_and_budget(self):
+        self._cfg(budget=123)
+        self.append("s1", _line("a", 42, tools=1))
+        self.assertEqual(self._run({"hook_event_name": "PreToolUse",
+                                    "tool_name": "Bash", "session_id": "s1",
+                                    "transcript_path": self.path("s1"),
+                                    "cwd": self.dir}), 0)
+        env = json.loads(self.link.slot.take())
+        self.assertEqual((env["k"], env["tok"]), ("event", "sekrit"))
+        d = env["d"]
+        self.assertEqual((d["running"], d["act"], d["tokens"], d["tools"],
+                          d["budget"]), (1, "building", 42, 1, 123))
+
+    def test_bad_budget_still_sends_the_event(self):
+        self._cfg(budget="lots")
+        self._run({"hook_event_name": "Stop"})
+        d = json.loads(self.link.slot.take())["d"]
+        self.assertNotIn("budget", d)
+        self.assertEqual(d.get("fx"), "celebrate")
+
+    def test_ask_roundtrip(self):
+        self._connect()
+        threading.Timer(0.3, self.link.decisions.set_from_notify,
+                        [b'{"askId":1,"decision":"deny"}']).start()
+        self.assertEqual(bh._ask_decision(self.host, "t", "Bash", False, 5),
+                         "deny")
+
+    def test_ask_fails_open_when_a_prompt_is_pending(self):
+        self._connect()
+        self.assertTrue(self.link.asks.try_begin())  # someone else's prompt
+        t0 = time.time()
+        self.assertEqual(bh._ask_decision(self.host, "t", "Bash", False, 5), "")
+        self.assertLess(time.time() - t0, 1.0)  # refused at once, no polling
+
+    def test_ask_fails_open_when_device_away(self):
+        self.assertEqual(bh._ask_decision(self.host, "t", "Bash", False, 5), "")
+
+    def test_refused_spawns_bridge_then_fails_open(self):
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        dead = "127.0.0.1:%d" % s.getsockname()[1]
+        s.close()  # nothing listens there now
+        spawned = []
+        with mock.patch.object(bh, "_spawn_bridge", lambda: spawned.append(1)), \
+                mock.patch.object(bh.time, "sleep", lambda _s: None):
+            self.assertEqual(bh._ask_decision(dead, "t", "Bash", True, 5), "")
+            with self.assertRaises(ConnectionRefusedError):
+                bh._post_event(dead, "t", {}, True)
+        self.assertEqual(len(spawned), 2)
 
 
 if __name__ == "__main__":

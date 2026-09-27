@@ -15,35 +15,67 @@ Fail-open: any bridge/device error is swallowed (never blocks the session).
 """
 import json
 import os
-import subprocess
+import socket
 import sys
 import time
-import urllib.error
-import urllib.request
 
 CFG = os.path.join(os.path.expanduser("~"), ".claude", "buddy.json")
 TOK_STATE = os.path.join(os.path.expanduser("~"), ".claude", "buddy_tokens.json")
 RT_STATE = os.path.join(os.path.expanduser("~"), ".claude", "buddy_rt.json")
 
-# Bypass any system/env HTTP proxy — the buddy is on the LAN.
-_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-
 
 def _cfg():
-    """Bridge endpoint + device token + whether the bridge is ours to spawn.
+    """Bridge endpoint, device token, whether the bridge is ours to spawn, and
+    the optional daily token budget ("budget": 2000000 -> on-device gauge;
+    0/absent -> none) -- one read of buddy.json per event.
     The device no longer has an IP — the on-demand local bridge relays
     everything over BLE. An explicit "host" instead points at a bridge running
     on another machine (tools/HOOKS.md §4); we never try to spawn that one."""
     with open(CFG, "r", encoding="utf-8") as f:
         c = json.load(f)
     host = c.get("host") or "127.0.0.1:%d" % int(c.get("port", 8787) or 8787)
-    return host, c["token"], not c.get("host")
+    try:
+        budget = int(c.get("budget", 0) or 0)
+    except (TypeError, ValueError):
+        budget = 0  # a bad budget must not cost the event
+    return host, c["token"], not c.get("host"), budget
+
+
+def _http(method, host, path, tok, body=b"", timeout=5):
+    """Minimal HTTP/1.0 client for the bridge -> (status, body bytes).
+    urllib.request alone costs ~60-90 ms to import, paid on EVERY hook event;
+    the bridge speaks HTTP/1.0 and closes after each response, so a raw socket
+    is all this needs (and, talking to the host directly, it never goes
+    through a system proxy). Raises OSError -- ConnectionRefusedError when no
+    bridge is listening."""
+    name, _, port = host.rpartition(":")
+    if not name or not port.isdigit():  # no explicit port
+        name, port = host, "80"
+    name = name.strip("[]")  # "[::1]:8787"
+    head = ("%s %s HTTP/1.0\r\nHost: %s\r\nX-Buddy-Token: %s\r\n"
+            "Content-Type: application/json\r\nContent-Length: %d\r\n\r\n"
+            % (method, path, host, tok, len(body)))
+    with socket.create_connection((name, int(port)), timeout=timeout) as s:
+        s.sendall(head.encode("utf-8") + body)
+        chunks = []
+        while True:
+            b = s.recv(4096)
+            if not b:
+                break
+            chunks.append(b)
+    raw = b"".join(chunks)
+    status_line, _, rest = raw.partition(b"\r\n")
+    parts = status_line.split(b" ", 2)
+    if len(parts) < 2 or not parts[1].isdigit():
+        raise OSError("bad HTTP response from bridge")
+    return int(parts[1]), rest.partition(b"\r\n\r\n")[2]
 
 
 def _spawn_bridge():
     """Fire-and-forget: start the bridge headless. The current event is
     dropped (snapshot semantics — the next one heals the display); the
     bridge's port-bind makes concurrent spawns collapse to one instance."""
+    import subprocess  # rare path: keep its import cost off every event
     bridge = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "buddy_bridge.py")
     kw = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
@@ -55,20 +87,6 @@ def _spawn_bridge():
         subprocess.Popen([sys.executable, bridge], **kw)
     except Exception:
         pass
-
-
-def _refused(exc):
-    return isinstance(getattr(exc, "reason", None), ConnectionRefusedError)
-
-
-def _budget():
-    """Optional daily token budget from buddy.json ("budget": 2000000) for the
-    on-device budget gauge. 0/absent -> no gauge."""
-    try:
-        with open(CFG, "r", encoding="utf-8") as f:
-            return int(json.load(f).get("budget", 0) or 0)
-    except Exception:
-        return 0
 
 
 def _intensity(evt, tool):
@@ -98,16 +116,10 @@ def _intensity(evt, tool):
 
 
 def _post_event(host, tok, payload, spawn):
-    req = urllib.request.Request(
-        "http://%s/event" % host,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "X-Buddy-Token": tok},
-        method="POST",
-    )
     try:
-        _opener.open(req, timeout=5).read()
-    except urllib.error.URLError as e:
-        if spawn and _refused(e):
+        _http("POST", host, "/event", tok, json.dumps(payload).encode("utf-8"))
+    except ConnectionRefusedError:
+        if spawn:
             _spawn_bridge()  # bridge wasn't running; this event is dropped
         raise
 
@@ -116,31 +128,28 @@ def _ask_decision(host, tok, tool, spawn, timeout=26):
     """Show an Allow/Deny prompt on the device, then poll the bridge for the
     tap. Returns "allow"/"deny", or "" on timeout/unreachable so the caller
     FAILS OPEN to Claude's normal permission prompt."""
-    req = urllib.request.Request(
-        "http://%s/ask" % host,
-        data=json.dumps({"tool": tool}).encode("utf-8"),
-        headers={"Content-Type": "application/json", "X-Buddy-Token": tok},
-        method="POST",
-    )
+    body = json.dumps({"tool": tool}).encode("utf-8")
     for attempt in (0, 1):
         try:
-            _opener.open(req, timeout=4).read()
-            break
-        except urllib.error.URLError as e:
-            if attempt == 0 and spawn and _refused(e):
+            status, _ = _http("POST", host, "/ask", tok, body, timeout=4)
+        except ConnectionRefusedError:
+            if attempt == 0 and spawn:
                 _spawn_bridge()
                 time.sleep(1.5)  # bridge boots fast; BLE connect races the poll
                 continue
-            return ""  # no bridge / device not connected -> normal prompt
+            return ""  # no bridge -> normal prompt
         except Exception:
             return ""
+        if status != 200:
+            # device not connected (502) / another prompt pending (409)
+            return ""
+        break
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            req = urllib.request.Request("http://%s/decision" % host,
-                                         headers={"X-Buddy-Token": tok})
-            r = json.loads(_opener.open(req, timeout=3).read().decode("utf-8"))
-            if r.get("decision") in ("allow", "deny"):
+            status, raw = _http("GET", host, "/decision", tok, timeout=3)
+            r = json.loads(raw.decode("utf-8"))
+            if status == 200 and r.get("decision") in ("allow", "deny"):
                 return r["decision"]
         except Exception:
             pass
@@ -371,7 +380,7 @@ def main():
     ev_ts = int(time.time() * 1000)
     evt = data.get("hook_event_name", "")
     try:
-        host, tok, spawn = _cfg()
+        host, tok, spawn, bud = _cfg()
     except Exception:
         return 0  # not configured -> do nothing
 
@@ -448,7 +457,6 @@ def main():
         payload = dict(extra, total=total, running=running, msg=msg[:24],
                        waiting=waiting, burst=burst, agents=agents, ts=ev_ts,
                        date=time.strftime("%Y-%m-%d", time.localtime()))
-        bud = _budget()
         if bud:
             payload["budget"] = bud
         if act:
