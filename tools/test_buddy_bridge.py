@@ -178,6 +178,35 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(bb.split_host("fe80::1", 8788), ("fe80::1", 8788))
 
 
+class TestWorkerSends(unittest.TestCase):
+    def test_sends_never_overlap(self):
+        """The pump, an ask from the HTTP thread and the goodbye can all send
+        at once; a serial port must only ever see one write in flight."""
+        class SlowTransport:
+            pings = True
+            active = peak = 0
+            sent = []
+
+            async def send(self, env):
+                SlowTransport.active += 1
+                SlowTransport.peak = max(SlowTransport.peak,
+                                         SlowTransport.active)
+                await asyncio.sleep(0.02)
+                SlowTransport.sent.append(env)
+                SlowTransport.active -= 1
+
+        async def go():
+            w = bb.Worker(bb.Link(), ["usb"])
+            w._send_lock = asyncio.Lock()
+            w.transport = SlowTransport()
+            await asyncio.gather(w._send(w.transport, b"event"),
+                                 w.send_ask(b"ask"), w.goodbye())
+
+        asyncio.run(go())
+        self.assertEqual(SlowTransport.peak, 1)
+        self.assertEqual(len(SlowTransport.sent), 3)
+
+
 class FakeDevice:
     """Speaks the firmware's stream protocol on a loopback TCP port: one
     envelope per line in, "@buddy {json}" lines out (with some debug noise

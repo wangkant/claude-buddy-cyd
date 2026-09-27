@@ -554,6 +554,15 @@ class Worker:
         self.link = link
         self.order = order
         self.transport = None
+        self._send_lock = None  # asyncio.Lock, created on the worker's loop
+
+    async def _send(self, t, env):
+        """Every write goes through here, one at a time: the pump, asks from
+        the HTTP thread and the goodbye can overlap, and a serial port must
+        never see two writes at once (pyserial's Windows backend shares one
+        OVERLAPPED per port; POSIX could interleave two envelopes)."""
+        async with self._send_lock:
+            await t.send(env)
 
     async def send_ask(self, envelope):
         """Deliver one envelope now (asks, WiFi config): the HTTP thread waits
@@ -561,14 +570,14 @@ class Worker:
         t = self.transport
         if t is None:
             raise RuntimeError("not connected")
-        await t.send(envelope)
+        await self._send(t, envelope)
 
     async def goodbye(self):
         """Tell a stream link we're leaving, so the device doesn't wait out
         its 90 s liveness window before it naps."""
         t = self.transport
         if t is not None and t.pings:
-            await t.send(make_envelope("bye", self.link.token, {}))
+            await self._send(t, make_envelope("bye", self.link.token, {}))
 
     async def _pump(self, t):
         link = self.link
@@ -579,11 +588,11 @@ class Worker:
             while not closed.done():
                 env = link.slot.take()
                 if env is not None:
-                    await t.send(env)
+                    await self._send(t, env)
                     last_tx = time.monotonic()
                     continue
                 if t.pings and time.monotonic() - last_tx >= PING_S:
-                    await t.send(make_envelope("ping", link.token, {}))
+                    await self._send(t, make_envelope("ping", link.token, {}))
                     last_tx = time.monotonic()
                 try:
                     await asyncio.wait_for(ev.wait(), timeout=2)
@@ -606,6 +615,7 @@ class Worker:
 
     async def run(self):
         link = self.link
+        self._send_lock = asyncio.Lock()
         link.loop = asyncio.get_running_loop()
         link.slot.attach(link.loop)
         scan_until = time.monotonic() + SCAN_WINDOW_S

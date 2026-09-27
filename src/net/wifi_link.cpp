@@ -1,5 +1,6 @@
 #include "wifi_link.h"
 #include <ESPmDNS.h>
+#include <lwip/sockets.h>
 
 namespace net {
 
@@ -142,9 +143,18 @@ void WifiTransport::send(const char *json) {
   int n = snprintf(line, sizeof(line), LINK_LINE_PREFIX "%s\n", json);
   if (n <= 0 || n >= (int)sizeof(line))
     return;
-  for (int i = 0; i < MAX_CLIENTS; i++)
-    if (clients_[i])
-      clients_[i].write((const uint8_t *)line, n);
+  // Never block the loop task on a peer: WiFiClient::write() retries a
+  // non-writable socket for up to ~10 s (select() 1 s x 10), freezing touch
+  // and rendering while e.g. a sleeping laptop stops ACKing. Send without
+  // waiting; a client that can't take a whole line at once is stalled (and
+  // a partial line is garbage anyway) -- drop it, its bridge reconnects.
+  for (int i = 0; i < MAX_CLIENTS; i++) {
+    if (!clients_[i])
+      continue;
+    int fd = clients_[i].fd();
+    if (fd < 0 || lwip_send(fd, line, n, MSG_DONTWAIT) != n)
+      clients_[i].stop();
+  }
 }
 
 } // namespace net
