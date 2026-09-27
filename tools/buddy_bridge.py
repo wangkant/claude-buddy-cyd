@@ -22,6 +22,8 @@ IDLE_EXIT_S = 600     # no HTTP request this long -> exit (Claude idle)
 SCAN_WINDOW_S = 90    # scanning budget after start/disconnect, then dormant
 DORMANT_SCAN_S = 10   # short rescan length while dormant
 DORMANT_GAP_S = 300   # minimum gap between dormant rescans
+ASK_HOLD_S = 30       # an unanswered prompt blocks new ones this long (>= the
+                      # hook's ~26 s decision poll + its 4 s /ask POST)
 
 
 def make_envelope(kind, token, body):
@@ -44,7 +46,6 @@ class LatestSlot:
     def attach(self, loop):
         """Called by the BLE worker once its asyncio loop exists, so put()
         (HTTP thread) can wake the worker across threads."""
-        import asyncio
         self._loop = loop
         self.event = asyncio.Event()
 
@@ -85,12 +86,41 @@ class DecisionStore:
             return self._decision
 
 
+class AskGate:
+    """One on-device prompt at a time. The device shows a single Allow/Deny
+    and the decision slot above is unkeyed, so a second concurrent /ask would
+    replace the first prompt and the one tap would answer BOTH polling hooks
+    -- approving a tool call the user never saw. A second ask while one is in
+    flight is refused instead, so that hook fails open to Claude's own prompt.
+    The gate reopens when the answer is read, the ask fails, or ASK_HOLD_S
+    passes (the first hook gave up or died)."""
+
+    def __init__(self, hold_s=ASK_HOLD_S, clock=time.monotonic):
+        self._lock = threading.Lock()
+        self._since = None
+        self._hold = hold_s
+        self._clock = clock
+
+    def try_begin(self):
+        with self._lock:
+            now = self._clock()
+            if self._since is not None and now - self._since < self._hold:
+                return False
+            self._since = now
+            return True
+
+    def end(self):
+        with self._lock:
+            self._since = None
+
+
 class Link:
     """State shared between the HTTP threads and the BLE worker."""
 
     def __init__(self):
         self.slot = LatestSlot()
         self.decisions = DecisionStore()
+        self.asks = AskGate()
         self.connected = False
         self.loop = None    # the BLE worker's asyncio loop
         self.worker = None  # BleWorker, set in main()
@@ -139,7 +169,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.link.touch()
         if self.path == "/decision":
-            self._send(200, {"decision": self.link.decisions.get()})
+            d = self.link.decisions.get()
+            if d:
+                self.link.asks.end()  # answered: the next prompt may go
+            self._send(200, {"decision": d})
         else:
             self._send(200, {"ok": True, "connected": self.link.connected})
 
@@ -159,8 +192,12 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/ask":
             # Synchronous-ish: the hook is blocking on this, so confirm the
             # GATT write actually landed (or fail fast so the hook fails open).
+            if not self.link.asks.try_begin():
+                self._send(409, {"ok": False, "error": "a prompt is pending"})
+                return
             self.link.decisions.clear()
             if not (self.link.connected and self.link.loop):
+                self.link.asks.end()
                 self._send(502, {"ok": False, "error": "device not connected"})
                 return
             try:
@@ -170,6 +207,7 @@ class Handler(BaseHTTPRequestHandler):
                 fut.result(timeout=4)
                 self._send(200, {"ok": True})
             except Exception:
+                self.link.asks.end()
                 self._send(502, {"ok": False, "error": "ble write failed"})
         else:
             self._send(404, {"ok": False})
@@ -231,8 +269,10 @@ class BleWorker:
                 continue
             disconnected = asyncio.Event()
 
-            def _on_dc(_c):
-                link.loop.call_soon_threadsafe(disconnected.set)
+            # bind THIS attempt's Event: a late callback from an old client
+            # must not trip the next connection's pump
+            def _on_dc(_c, ev=disconnected):
+                link.loop.call_soon_threadsafe(ev.set)
 
             try:
                 async with BleakClient(dev,
