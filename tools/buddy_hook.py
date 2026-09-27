@@ -172,6 +172,36 @@ def _int(x):
         return 0
 
 
+# A dormant session stays parked (compacted scan state + its carry) this many
+# days after it was last active; see _today_stats.
+PARK_DAYS = 14
+
+
+def _age(day, today):
+    """Whole days from `day` to `today` (YYYY-MM-DD); 0 if unparseable."""
+    import datetime  # rollover-only: keep the import off the per-event path
+    try:
+        return (datetime.date.fromisoformat(today)
+                - datetime.date.fromisoformat(day)).days
+    except (TypeError, ValueError):
+        return 0
+
+
+def _park(v, day):
+    """Compact a session's scan state for parking: fold the recent-id window
+    into the base (a day on, no streaming re-log of those ids is coming), so
+    only the offset + totals stay in the state file, stamped with the last
+    day the session was active."""
+    b = v.get("base") if isinstance(v.get("base"), dict) else {}
+    base = {k: _int(b.get(k)) for k in ("tok", "tools", "turns")}
+    for t in v.get("tail") if isinstance(v.get("tail"), list) else []:
+        if isinstance(t, list) and len(t) == 3:
+            base["tok"] += _int(t[1])
+            base["tools"] += _int(t[2])
+            base["turns"] += 1
+    return dict(base, off=_int(v.get("off")), base=base, tail=[], day=day)
+
+
 # Dedupe window for the incremental scan: streaming re-logs the same assistant
 # message id in bursts of nearby lines, so a bounded recent-id window catches
 # the duplicates without keeping every id of a huge session in the state file.
@@ -306,13 +336,25 @@ def _today_stats(data):
         # tokens into the all-time base, and remember each session's rolled
         # totals in `carry` (tokens) / `carryN` ([tools, turns]) so a session
         # that continues PAST midnight isn't counted again today. Only the part
-        # not already rolled at an earlier midnight joins base -- a session can
-        # span several, and re-adding its lifetime count inflated tokensAll.
-        # `scan` keeps the previous day's scan states so such a session resumes
-        # at its byte offset instead of re-reading its whole transcript (tens of
-        # MB late in a long session). It holds at most one day of sessions and
-        # is replaced at the next rollover.
-        new_carry, new_carry_n = {}, {}
+        # not already rolled at an earlier midnight joins base.
+        # Every session then goes dormant ("parked" in `scan`, compacted) with
+        # its carry for PARK_DAYS, so one that resumes -- tomorrow, or after
+        # skipping several midnights while other sessions rolled the day --
+        # continues at its byte offset (no re-read of a tens-of-MB transcript)
+        # and never has its already-rolled tokens counted twice.
+        last_day = st.get("date") if isinstance(st.get("date"), str) else today
+        new_scan, new_carry, new_carry_n = {}, {}, {}
+        for k, v in scan.items():  # still dormant from earlier days
+            if not isinstance(v, dict):
+                continue
+            v.setdefault("day", last_day)
+            if _age(v["day"], today) > PARK_DAYS:
+                continue  # long gone: forget it (and its carry)
+            new_scan[k] = v
+            if k in carry:
+                new_carry[k] = carry[k]
+            if k in carry_n:
+                new_carry_n[k] = carry_n[k]
         if isinstance(sessions, dict):
             for k, v in sessions.items():
                 if isinstance(v, dict):
@@ -321,11 +363,9 @@ def _today_stats(data):
                     new_carry[k] = t
                     new_carry_n[k] = [_int(v.get("tools")),
                                       _int(v.get("turns"))]
-            scan = sessions
-        else:
-            scan = {}
+                    new_scan[k] = _park(v, last_day)
         sessions = {}
-        carry, carry_n = new_carry, new_carry_n
+        scan, carry, carry_n = new_scan, new_carry, new_carry_n
     prior = sessions.get(sid) or scan.pop(sid, None)
     sess = _scan_transcript(tp, prior if isinstance(prior, dict) else None)
     if sess is None:

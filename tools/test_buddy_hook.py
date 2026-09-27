@@ -133,6 +133,42 @@ class TestTodayStats(_TmpDir):
         r = self.stats("s1")
         self.assertEqual((r["tokens"], r["tokensAll"]), (7, 157))
 
+    def test_session_dormant_across_midnights_keeps_its_carry(self):
+        # A is active day 1, sits out day 2 (C rolls the day) and the next
+        # midnight (B rolls it again), then resumes: its day-1 tokens must not
+        # come back as "today" nor be re-added to the all-time base.
+        self.append("A", _line("a1", 100))
+        self.stats("A")
+        self.day = "2026-09-27"
+        self.append("C", _line("c1", 30))
+        self.stats("C")
+        self.day = "2026-09-28"
+        self.append("B", _line("b1", 50))
+        self.stats("B")
+        self.append("A", _line("a2", 30))
+        r = self.stats("A")
+        self.assertEqual((r["tokens"], r["tokensAll"]), (80, 210))
+        self.day = "2026-09-29"
+        self.append("A", _line("a3", 10))
+        r = self.stats("A")
+        self.assertEqual((r["tokens"], r["tokensAll"]), (10, 220))
+
+    def test_parked_sessions_are_compact_and_expire(self):
+        for i in range(bh.TAIL_MAX // 2):
+            self.append("A", _line("m%d" % i, 1))
+        self.stats("A")
+        self.day = "2026-09-27"
+        self.append("B", _line("b", 1))
+        self.stats("B")
+        parked = self.state()["scan"]["A"]
+        self.assertEqual((parked["tail"], parked["tok"], parked["day"]),
+                         ([], bh.TAIL_MAX // 2, "2026-09-26"))
+        self.day = "2026-10-12"  # 16 days after A was last active
+        self.stats("B")
+        st = self.state()
+        self.assertNotIn("A", st["scan"])
+        self.assertNotIn("A", st["carry"])
+
     def test_corrupt_values_do_not_crash(self):
         with open(self.path("state.json"), "w", encoding="utf-8") as f:
             json.dump({"date": "2026-09-25", "allTokBase": "junk",
