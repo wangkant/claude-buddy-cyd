@@ -26,16 +26,32 @@ int textW(const char *s, const GFXfont *f) {
   return tft().textWidth(s);
 }
 
+// Fit s into maxW px, trimming it and adding "..." when it doesn't (one rule for
+// every clamped text). Returns s itself when it already fits -- the common
+// path, no copy -- else the trimmed text built in buf. The copy is bounded:
+// some strings (the ask prompt's tool name) arrive uncapped from the hook.
+static const char *clampEllipsis(const char *s, const GFXfont *f, int maxW,
+                                 char *buf, size_t n) {
+  if (textW(s, f) <= maxW)
+    return s;
+  snprintf(buf, n, "%s", s);
+  size_t len = strlen(buf);
+  if (len + 4 > n)
+    len = n - 4; // leave room for "..." + NUL
+  for (; len > 1; len--) {
+    memcpy(buf + len, "...", 4);
+    if (textW(buf, f) <= maxW)
+      return buf;
+  }
+  memcpy(buf + len, "...", 4);
+  return buf;
+}
+
 void gtextClampC(TFT_eSPI &c, const char *s, int x, int y, const GFXfont *f,
                  uint16_t fg, uint16_t bg, uint8_t datum, int maxW) {
-  if (textW(s, f) <= maxW) {
-    gtextC(c, s, x, y, f, fg, bg, datum);
-    return;
-  }
-  String str(s);
-  while (str.length() > 1 && textW((str + "...").c_str(), f) > maxW)
-    str.remove(str.length() - 1);
-  gtextC(c, (str + "...").c_str(), x, y, f, fg, bg, datum);
+  char buf[96];
+  gtextC(c, clampEllipsis(s, f, maxW, buf, sizeof(buf)), x, y, f, fg, bg,
+         datum);
 }
 
 void gtextClamp(const char *s, int x, int y, const GFXfont *f, uint16_t fg,
@@ -46,25 +62,21 @@ void gtextClamp(const char *s, int x, int y, const GFXfont *f, uint16_t fg,
 void blitText(int rx, int ry, int w, int h, const char *s, int tx, int ty,
               const GFXfont *f, uint16_t fg, uint16_t bg, uint8_t datum,
               int maxW) {
-  String str(s); // clamp to maxW with a trailing ellipsis (same rule as gtextClamp)
-  if (textW(str.c_str(), f) > maxW) {
-    while (str.length() > 1 && textW((str + "...").c_str(), f) > maxW)
-      str.remove(str.length() - 1);
-    str += "...";
-  }
+  char buf[96]; // clamp to maxW with a trailing ellipsis (same rule as gtextClamp)
+  const char *str = clampEllipsis(s, f, maxW, buf, sizeof(buf));
   TFT_eSprite spr(&tft());
   spr.setColorDepth(16);
   if (!spr.createSprite(w, h)) {
     // not enough heap for the sprite -> fall back to direct erase+draw (may flicker)
     tft().fillRect(rx, ry, w, h, bg);
-    gtext(str.c_str(), tx, ty, f, fg, bg, datum);
+    gtext(str, tx, ty, f, fg, bg, datum);
     return;
   }
   spr.fillSprite(bg);
   spr.setFreeFont(f);
   spr.setTextDatum(datum);
   spr.setTextColor(fg, bg);
-  spr.drawString(str.c_str(), tx - rx, ty - ry); // translate anchor into sprite space
+  spr.drawString(str, tx - rx, ty - ry); // translate anchor into sprite space
   spr.pushSprite(rx, ry);
   spr.deleteSprite();
 }

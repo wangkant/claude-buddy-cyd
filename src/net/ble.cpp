@@ -19,7 +19,10 @@ static const char *DEC_UUID = "177b0003-6f32-4ea3-b878-866e7628de1f";
 // copies and are parsed + applied in loop() — same "single-threaded AppState"
 // contract the WebServer version had.
 #define Q_DEPTH 8
-#define PAYLOAD_MAX 2048
+// NimBLE rejects writes over the characteristic's max length (BLE_ATT_ATTR_MAX_LEN,
+// 512 on ESP32) before onWrite() runs, so an oversized envelope already fails
+// as a GATT write error on the bridge; this guard just mirrors that ceiling.
+#define PAYLOAD_MAX 512
 static QueueHandle_t g_q = nullptr;
 static volatile bool g_connected = false;
 static NimBLECharacteristic *g_decision = nullptr;
@@ -140,8 +143,10 @@ void Ble::loop() {
     free(raw);
     if (!ok)
       continue;
+    // (plain strcmp: the 16-char token is past String's SSO, so building a
+    // temporary String here cost a malloc/free per event)
     if (g_token.length() &&
-        String((const char *)(env["tok"] | "")) != g_token)
+        strcmp((const char *)(env["tok"] | ""), g_token.c_str()) != 0)
       continue; // bad/missing token: drop silently
     const char *kind = env["k"] | "";
     if (!strcmp(kind, "event"))

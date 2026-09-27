@@ -12,6 +12,7 @@ struct HistBlob {
 };
 
 static HistBlob g_hist; // zero-initialised: count 0, all slots stable for memcmp
+static HistBlob g_lastSaved; // what NVS holds; primed by historyRestore()
 
 void historyNote(const String &date, long tokens) {
   if (date.length() != 10)
@@ -53,14 +54,14 @@ void historyRestore(hal::Storage &storage) {
   if (b.count < 0 || b.count > HISTORY_DAYS)
     return; // corrupt count -> start fresh rather than index out of range
   g_hist = b;
+  g_lastSaved = b; // unchanged since restore -> no rewrite on every boot/wake
   Serial.printf("[hist] restored %d day(s)\n", (int)g_hist.count);
 }
 
 bool historySaveIfChanged(hal::Storage &storage, bool force) {
-  static HistBlob last;
   static uint32_t lastSaveMs = 0;
   g_hist.magic = HIST_MAGIC;
-  if (memcmp(&g_hist, &last, sizeof(g_hist)) == 0)
+  if (memcmp(&g_hist, &g_lastSaved, sizeof(g_hist)) == 0)
     return false; // nothing new to persist
   uint32_t now = millis();
   if (!force && lastSaveMs && now - lastSaveMs < HIST_SAVE_MS)
@@ -69,7 +70,7 @@ bool historySaveIfChanged(hal::Storage &storage, bool force) {
     Serial.println("[hist] NVS write FAILED");
     return false;
   }
-  last = g_hist;
+  g_lastSaved = g_hist;
   lastSaveMs = now;
   return true;
 }
