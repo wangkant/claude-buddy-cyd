@@ -153,6 +153,16 @@ def _project(data):
     return os.path.basename(os.path.normpath(cwd))[:24]
 
 
+def _int(x):
+    """Tolerant int for values read back from the state file: a hand-edited or
+    half-written field reads as 0 instead of crashing every later event (the
+    next successful write repairs the file)."""
+    try:
+        return int(x or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 # Dedupe window for the incremental scan: streaming re-logs the same assistant
 # message id in bursts of nearby lines, so a bounded recent-id window catches
 # the duplicates without keeping every id of a huge session in the state file.
@@ -193,8 +203,7 @@ def _scan_transcript(path, st=None):
             and isinstance(st.get("tail"), list)
             and isinstance(st.get("off"), int) and 0 <= st["off"] <= size):
         off = st["off"]
-        base = {k: int(st["base"].get(k, 0) or 0)
-                for k in ("tok", "tools", "turns")}
+        base = {k: _int(st["base"].get(k)) for k in ("tok", "tools", "turns")}
         tail = [t for t in st["tail"]
                 if isinstance(t, list) and len(t) == 3 and t[0]]
     try:
@@ -247,13 +256,13 @@ def _scan_transcript(path, st=None):
         while len(tail) > TAIL_MAX:  # retire settled ids into the base rollup
             old = tail.pop(0)
             idx.pop(old[0], None)
-            base["tok"] += int(old[1] or 0)
-            base["tools"] += int(old[2] or 0)
+            base["tok"] += _int(old[1])
+            base["tools"] += _int(old[2])
             base["turns"] += 1
         off += end + 1
     return {
-        "tok": base["tok"] + sum(int(t[1] or 0) for t in tail),
-        "tools": base["tools"] + sum(int(t[2] or 0) for t in tail),
+        "tok": base["tok"] + sum(_int(t[1]) for t in tail),
+        "tools": base["tools"] + sum(_int(t[2]) for t in tail),
         "turns": base["turns"] + len(tail),
         "off": off,
         "base": base,
@@ -275,58 +284,77 @@ def _today_stats(data):
         st = {}
     if not isinstance(st, dict):
         st = {}
-    base = int(st.get("allTokBase", 0) or 0)
+    base = _int(st.get("allTokBase"))
     sessions = st.get("sessions")
-    carry = st.get("carry")
-    if not isinstance(carry, dict):
-        carry = {}
+
+    def _dict(k):
+        v = st.get(k)
+        return v if isinstance(v, dict) else {}
+
+    carry, carry_n, scan = _dict("carry"), _dict("carryN"), _dict("scan")
     if st.get("date") != today or not isinstance(sessions, dict):
         # New local day (or first run / legacy format): roll the prior day's
         # tokens into the all-time base, and remember each session's rolled
-        # count in `carry` so a session that continues PAST midnight doesn't get
-        # its pre-midnight tokens counted again today (which double-counted them
-        # in tokensAll, since base already holds them).
-        new_carry = {}
+        # totals in `carry` (tokens) / `carryN` ([tools, turns]) so a session
+        # that continues PAST midnight isn't counted again today. Only the part
+        # not already rolled at an earlier midnight joins base -- a session can
+        # span several, and re-adding its lifetime count inflated tokensAll.
+        # `scan` keeps the previous day's scan states so such a session resumes
+        # at its byte offset instead of re-reading its whole transcript (tens of
+        # MB late in a long session). It holds at most one day of sessions and
+        # is replaced at the next rollover.
+        new_carry, new_carry_n = {}, {}
         if isinstance(sessions, dict):
             for k, v in sessions.items():
                 if isinstance(v, dict):
-                    t = int(v.get("tok", 0) or 0)
-                    base += t
+                    t = _int(v.get("tok"))
+                    base += max(0, t - _int(carry.get(k)))
                     new_carry[k] = t
+                    new_carry_n[k] = [_int(v.get("tools")),
+                                      _int(v.get("turns"))]
+            scan = sessions
+        else:
+            scan = {}
         sessions = {}
-        carry = new_carry
-    prior = sessions.get(sid)
+        carry, carry_n = new_carry, new_carry_n
+    prior = sessions.get(sid) or scan.pop(sid, None)
     sess = _scan_transcript(tp, prior if isinstance(prior, dict) else None)
     if sess is None:
         return None
     sessions[sid] = sess
     st = {"date": today, "sessions": sessions, "allTokBase": base,
-          "carry": carry}
+          "carry": carry, "carryN": carry_n, "scan": scan}
+    # atomic swap through a per-process temp: overlapping hooks each write
+    # their own file, so two writers can never interleave into one torn JSON
+    # (which reset allTokBase and forced a full rescan of every session)
+    tmp = "%s.%d.tmp" % (TOK_STATE, os.getpid())
     try:
-        # atomic swap: concurrent async hooks may race on this file, and a torn
-        # write would junk every session's scan state at once
-        with open(TOK_STATE + ".tmp", "w", encoding="utf-8") as f:
-            json.dump(st, f)
-        os.replace(TOK_STATE + ".tmp", TOK_STATE)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(st, f, separators=(",", ":"))
+        os.replace(tmp, TOK_STATE)
     except Exception:
-        pass
+        try:  # e.g. a reader holds the target open on Windows
+            os.remove(tmp)
+        except OSError:
+            pass
 
-    # today's tokens = each session's lifetime tokens minus whatever already
-    # rolled into base at the last midnight (0 for sessions that started today).
-    tok = 0
+    # today = each session's lifetime totals minus whatever already rolled over
+    # at an earlier midnight (nothing for sessions that started today)
+    tok = tools = turns = 0
     for k, v in sessions.items():
-        if isinstance(v, dict):
-            tok += max(0, int(v.get("tok", 0) or 0) - int(carry.get(k, 0) or 0))
-
-    def _sum(k):
-        return sum(int(v.get(k, 0) or 0)
-                   for v in sessions.values() if isinstance(v, dict))
+        if not isinstance(v, dict):
+            continue
+        tok += max(0, _int(v.get("tok")) - _int(carry.get(k)))
+        cn = carry_n.get(k)
+        ct, cu = cn if isinstance(cn, list) and len(cn) == 2 else (0, 0)
+        tools += max(0, _int(v.get("tools")) - _int(ct))
+        turns += max(0, _int(v.get("turns")) - _int(cu))
 
     return {
         "tokens": tok,
         "tokensAll": base + tok,
-        "tools": _sum("tools"),
-        "turns": _sum("turns"),
+        "tools": tools,
+        "turns": turns,
         "sessions": len(sessions),
     }
 
@@ -365,7 +393,10 @@ def main():
         return 0
 
     extra = {"project": _project(data)}
-    stats = _today_stats(data)
+    try:
+        stats = _today_stats(data)
+    except Exception:
+        stats = None  # never let the usage rollup cost the activity update
     if stats:
         extra.update(stats)
 
@@ -399,7 +430,8 @@ def main():
     elif evt == "PreCompact":
         running, total, msg, fx = 1, 1, "compacting", "sweeping"
     elif evt == "Notification":
-        running, total, msg, fx = 0, 1, str(data.get("notification", "notice")), "notification"
+        note = data.get("message") or data.get("notification") or "notice"
+        running, total, msg, fx = 0, 1, str(note), "notification"
     elif evt == "SessionEnd":
         running, total, msg = 0, 0, "bye"
     else:
