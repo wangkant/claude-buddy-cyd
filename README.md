@@ -1,13 +1,8 @@
 # CYD Claude Buddy
 
 <p align="center">
-  <img src="assets/typing.gif" width="152" alt="typing">
-  <img src="assets/hammering.gif" width="152" alt="hammering">
-  <img src="assets/brewing.gif" width="152" alt="brewing">
-  <img src="assets/painting.gif" width="152" alt="painting">
-  <img src="assets/conjuring.gif" width="152" alt="conjuring">
+  <img src="assets/project-cover.png" width="960" alt="CYD Claude Buddy — an illustrated yellow ESP32 display with the orange Clawd mascot on a warm desktop">
 </p>
-<p align="center"><sub>Clawd hard at work — typing&nbsp;·&nbsp;hammering&nbsp;·&nbsp;brewing&nbsp;·&nbsp;painting&nbsp;·&nbsp;conjuring</sub></p>
 
 A desk companion for Claude Code: the orange **Clawd** mascot on a **Cheap
 Yellow Display** (ESP32) that mirrors your live Claude Code activity and usage
@@ -37,6 +32,7 @@ ESP32 + TFT panels — see [Adapting to other boards](#adapting-to-other-boards)
 
 ## Contents
 
+- [Clawd in action](#clawd-in-action)
 - [How it works](#how-it-works) · [Connections: USB, BLE, WiFi](#connections-usb-ble-wifi)
 - [What it shows](#what-it-shows)
 - [Hardware](#hardware) · [Adapting to other boards](#adapting-to-other-boards)
@@ -48,6 +44,14 @@ ESP32 + TFT panels — see [Adapting to other boards](#adapting-to-other-boards)
 - [Power use](#power-use)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development) · [Repository layout](#repository-layout) · [License &amp; credits](#license--credits)
+
+## Clawd in action
+
+A few of Clawd's working animations, straight from the device's character pack.
+
+| Typing | Hammering | Brewing | Painting | Conjuring |
+| :---: | :---: | :---: | :---: | :---: |
+| <img src="assets/typing.gif" width="152" alt="Clawd typing at a keyboard"> | <img src="assets/hammering.gif" width="152" alt="Clawd hammering in a hard hat"> | <img src="assets/brewing.gif" width="152" alt="Clawd brewing"> | <img src="assets/painting.gif" width="152" alt="Clawd painting"> | <img src="assets/conjuring.gif" width="152" alt="Clawd conjuring"> |
 
 ## How it works
 
