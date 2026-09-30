@@ -4,7 +4,7 @@ The buddy is driven entirely by Claude Code **hooks** (no official Hardware
 Buddy feature needed). A tiny helper (`buddy_hook.py`) POSTs hook events to a
 local **bridge** (`buddy_bridge.py`, spawned on demand, exits when Claude goes
 quiet) which relays them to the CYD over **USB, Bluetooth LE or WiFi** —
-whichever link is available (README → *Connections*). By default it is a
+whichever link is available ([connection guide](../docs/GUIDE.md#connections-usb-ble-wifi)). By default it is a
 **passive stats dashboard** — every status hook is async and never affects a
 session. One **optional** hook (`PermissionRequest`, §2.1) is synchronous and
 lets you **approve a tool call by tapping the device** instead of the
