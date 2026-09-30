@@ -47,11 +47,166 @@ ESP32 + TFT panels — see [Adapting to other boards](#adapting-to-other-boards)
 
 ## Clawd in action
 
-A few of Clawd's working animations, straight from the device's character pack.
+Meet all **29 animations** in the character pack. Each preview below is the actual
+GIF used on the device; click one to open it at full size.
 
-| Typing | Hammering | Brewing | Painting | Conjuring |
-| :---: | :---: | :---: | :---: | :---: |
-| <img src="assets/typing.gif" width="152" alt="Clawd typing at a keyboard"> | <img src="assets/hammering.gif" width="152" alt="Clawd hammering in a hard hat"> | <img src="assets/brewing.gif" width="152" alt="Clawd brewing"> | <img src="assets/painting.gif" width="152" alt="Clawd painting"> | <img src="assets/conjuring.gif" width="152" alt="Clawd conjuring"> |
+### Working alongside you
+
+Clawd follows the tools and tasks in your Claude Code session.
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href="data/clawd/typing.gif"><img src="data/clawd/typing.gif" width="190" height="140" alt="Clawd — typing"></a><br>
+      <strong>Typing</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/writing.gif"><img src="data/clawd/writing.gif" width="190" height="140" alt="Clawd — writing"></a><br>
+      <strong>Writing</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/terminal.gif"><img src="data/clawd/terminal.gif" width="190" height="140" alt="Clawd — running commands"></a><br>
+      <strong>Running commands</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="data/clawd/hammering.gif"><img src="data/clawd/hammering.gif" width="190" height="140" alt="Clawd — building"></a><br>
+      <strong>Building</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/reading.gif"><img src="data/clawd/reading.gif" width="190" height="140" alt="Clawd — reading"></a><br>
+      <strong>Reading</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/scanning.gif"><img src="data/clawd/scanning.gif" width="190" height="140" alt="Clawd — inspecting"></a><br>
+      <strong>Inspecting</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="data/clawd/searching.gif"><img src="data/clawd/searching.gif" width="190" height="140" alt="Clawd — searching"></a><br>
+      <strong>Searching</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/planning.gif"><img src="data/clawd/planning.gif" width="190" height="140" alt="Clawd — planning"></a><br>
+      <strong>Planning</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/tooling.gif"><img src="data/clawd/tooling.gif" width="190" height="140" alt="Clawd — using tools"></a><br>
+      <strong>Using tools</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="data/clawd/delegating.gif"><img src="data/clawd/delegating.gif" width="190" height="140" alt="Clawd — delegating"></a><br>
+      <strong>Delegating</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/pondering.gif"><img src="data/clawd/pondering.gif" width="190" height="140" alt="Clawd — thinking"></a><br>
+      <strong>Thinking</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/sweeping.gif"><img src="data/clawd/sweeping.gif" width="190" height="140" alt="Clawd — compacting"></a><br>
+      <strong>Compacting</strong>
+    </td>
+  </tr>
+</table>
+
+### A little creative energy
+
+The playful rotation that keeps Clawd busy between tool-specific actions.
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href="data/clawd/brewing.gif"><img src="data/clawd/brewing.gif" width="190" height="140" alt="Clawd — brewing"></a><br>
+      <strong>Brewing</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/forging.gif"><img src="data/clawd/forging.gif" width="190" height="140" alt="Clawd — forging"></a><br>
+      <strong>Forging</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/conjuring.gif"><img src="data/clawd/conjuring.gif" width="190" height="140" alt="Clawd — conjuring"></a><br>
+      <strong>Conjuring</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="data/clawd/juggling.gif"><img src="data/clawd/juggling.gif" width="190" height="140" alt="Clawd — juggling"></a><br>
+      <strong>Juggling</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/painting.gif"><img src="data/clawd/painting.gif" width="190" height="140" alt="Clawd — painting"></a><br>
+      <strong>Painting</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/churning.gif"><img src="data/clawd/churning.gif" width="190" height="140" alt="Clawd — turning gears"></a><br>
+      <strong>Turning gears</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="data/clawd/stacking.gif"><img src="data/clawd/stacking.gif" width="190" height="140" alt="Clawd — stacking blocks"></a><br>
+      <strong>Stacking blocks</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/vibing.gif"><img src="data/clawd/vibing.gif" width="190" height="140" alt="Clawd — vibing"></a><br>
+      <strong>Vibing</strong>
+    </td>
+    <td></td>
+  </tr>
+</table>
+
+### Between tasks & reactions
+
+Quiet moments, a friendly hello, and a nudge when Clawd needs you.
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href="data/clawd/sleep.gif"><img src="data/clawd/sleep.gif" width="190" height="140" alt="Clawd — sleeping"></a><br>
+      <strong>Sleeping</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/idle_blink.gif"><img src="data/clawd/idle_blink.gif" width="190" height="140" alt="Clawd — blinking"></a><br>
+      <strong>Blinking</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/idle_look.gif"><img src="data/clawd/idle_look.gif" width="190" height="140" alt="Clawd — looking around"></a><br>
+      <strong>Looking around</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="data/clawd/idle_hop.gif"><img src="data/clawd/idle_hop.gif" width="190" height="140" alt="Clawd — happy hop"></a><br>
+      <strong>Happy hop</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/attention.gif"><img src="data/clawd/attention.gif" width="190" height="140" alt="Clawd — needs you"></a><br>
+      <strong>Needs you</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/celebrate.gif"><img src="data/clawd/celebrate.gif" width="190" height="140" alt="Clawd — done!"></a><br>
+      <strong>Done!</strong>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="data/clawd/heart.gif"><img src="data/clawd/heart.gif" width="190" height="140" alt="Clawd — hello"></a><br>
+      <strong>Hello</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/error.gif"><img src="data/clawd/error.gif" width="190" height="140" alt="Clawd — oops"></a><br>
+      <strong>Oops</strong>
+    </td>
+    <td align="center" width="33%">
+      <a href="data/clawd/dizzy.gif"><img src="data/clawd/dizzy.gif" width="190" height="140" alt="Clawd — dizzy"></a><br>
+      <strong>Dizzy</strong>
+    </td>
+  </tr>
+</table>
 
 ## How it works
 
